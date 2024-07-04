@@ -1,3 +1,6 @@
+# Refer this website for more info on using paho MQTT client
+# https://www.emqx.com/en/blog/how-to-use-mqtt-in-python
+
 from paho.mqtt import client as mqtt_client
 from PIL import Image
 from io import BytesIO
@@ -14,14 +17,16 @@ MAX_RECONNECT_DELAY = 60
 broker = "localhost"
 port = 1883
 dustbin_ID = 1
-topic = f"/group_11/{dustbin_ID}/img_frame"
+img_topic = f"/group_11/{dustbin_ID}/img_frame"
+take_pic_topic = "/group_11/take_picture"
 client_id = f'python-mqtt-{random.randint(0, 1000)}'
 
 class MQTTClientHandler:
     def __init__(self):
         super().__init__()
+        self.takeAPicture = False
 
-    def onConnect(self, client, userdata, flags, rc, properties):
+    def onConnect(self, client, userdata, flags, rc, properties = None):
         if rc == 0:
             print("Connected to Mosquitto MQTT Broker")
         else:
@@ -48,57 +53,64 @@ class MQTTClientHandler:
 
 
     def connectMQTT(self):
-        client = mqtt_client.Client(client_id)
-
+        client = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2, client_id)
         client.on_connect = self.onConnect
         client.on_disconnect = self.onDisconnect
         client.connect(broker, port)
         return client
     
-    def on_message(client, userdata, msg):
+    def on_message(self, client, userdata, msg):
         print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
+        if msg.topic == '/group_11/take_picture':
+            self.takeAPicture = msg.payload.decode()
+            print(self.takeAPicture)
 
 
-    def publishMQTT(self, client):
-        msgCount = 1
-        while True:
-            time.sleep(1)
-            msg = f"messages: {msgCount}"
-            result = client.publish(topic, msg)
-            status = result[0]
+    # TODO: Replace this code segment to take pictures from a camera
+    def imgToBase64(self):
+        # Open the image file
+        with open("imagelol.jpg", "rb") as f:
+            buffer = BytesIO()
+            image = Image.open(f)
 
-            if status == 0:
-                print(f"Send `{msg}` to topic `{topic}`")
-            else:
-                print(f"Failed to send message to topic {topic}")
-            msgCount += 1
-            if msgCount > 5:
-                break
+            # resize the image so that the base64 code is not too long
+            width, height = image.size
+            new_size = (width // 2, height // 2)
+            resized_image = image.resize(new_size)
+            resized_image.save(buffer, format="JPEG")
+            encoded_image = base64.b64encode(buffer.getvalue())
+            print(str(encoded_image)[2:-1])
+            return encoded_image
+        
+    def publishMQTT(self, topic, client):
+        if self.takeAPicture:
+            msg = self.imgToBase64()
+        result = client.publish(topic, msg)
+        status = result[0]
 
-    def subscribe(self, client: mqtt_client):
+        if status == 0:
+            print(f"Send `{msg}` to topic `{topic}`")
+        else:
+            print(f"Failed to send message to topic {topic}")
+
+    def subscribeMQTT(self, topic, client: mqtt_client):
         client.subscribe(topic)
         client.on_message = self.on_message
-
-def imgToBase64():
-    # Open the image file
-    with open("frc.jpeg", "rb") as f:
-        buffer = BytesIO()
-        image = Image.open(f)
-
-        # resize the image so that the base64 code is not too long
-        width, height = image.size
-        new_size = (width // 2, height // 2)
-        resized_image = image.resize(new_size)
-        resized_image.save(buffer, format="JPEG")
-        encoded_image = base64.b64encode(buffer.getvalue())
-        #print(str(encoded_image)[2:-1])
+    
+    def reqAndRespHandler(self, client):
+        self.subscribeMQTT(take_pic_topic, client)
+        #print("lmao")
+        if self.takeAPicture:
+            self.publishMQTT(img_topic, client)
+            self.takeAPicture = False
 
 def main(args = None):
+    clientClass = MQTTClientHandler()
+    client = clientClass.connectMQTT()
     while True:
-        clientClass = MQTTClientHandler()
-        client = clientClass.connectMQTT()
-
-
+        client.loop_start()    
+        clientClass.reqAndRespHandler(client)
+        client.loop_stop() 
 
 if __name__ == "__main__":
     main()
