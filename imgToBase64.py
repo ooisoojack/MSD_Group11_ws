@@ -8,12 +8,19 @@ import base64
 import random
 import logging
 import time
+import cv2
+from pathlib import Path
+import os
 
 FIRST_RECONNECT_DELAY = 1
 RECONNECT_RATE = 2
 MAX_RECONNECT_COUNT = 12
 MAX_RECONNECT_DELAY = 60
 
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
+
+cam_id = "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
 broker = "localhost"
 port = 1883
 dustbin_ID = 1
@@ -25,6 +32,11 @@ class MQTTClientHandler:
     def __init__(self):
         super().__init__()
         self.takeAPicture = False
+        self.gotPic = False
+        self.cap = cv2.VideoCapture(0)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+
 
     def onConnect(self, client, userdata, flags, rc, properties = None):
         if rc == 0:
@@ -65,22 +77,39 @@ class MQTTClientHandler:
             self.takeAPicture = msg.payload.decode()
             print(self.takeAPicture)
 
+    def capturePicture(self):
+        result, image = self.cap.read()
+        #time.sleep(1)
+        if self.takeAPicture:
+            if result:
+                self.gotPic = True
+                myFile = Path(f"picTaken.jpg")
+                if myFile.is_file():
+                    try:
+                        os.remove("picTaken.jpg")
+                    except:
+                        pass
+                cv2.imwrite(f"picTaken.jpg", image)
+            else:
+                self.gotPic = False
+                print("No image detected. Please try again")
 
-    # TODO: Replace this code segment to take pictures from a camera
+
     def imgToBase64(self):
         # Open the image file
-        with open("imagelol.jpg", "rb") as f:
-            buffer = BytesIO()
-            image = Image.open(f)
+        if self.gotPic:
+            with open("picTaken.jpg", "rb") as f:
+                buffer = BytesIO()
+                image = Image.open(f)
 
-            # resize the image so that the base64 code is not too long
-            width, height = image.size
-            new_size = (width // 2, height // 2)
-            resized_image = image.resize(new_size)
-            resized_image.save(buffer, format="JPEG")
-            encoded_image = base64.b64encode(buffer.getvalue())
-            print(str(encoded_image)[2:-1])
-            return encoded_image
+                # resize the image so that the base64 code is not too long
+                width, height = image.size
+                new_size = (width // 2, height // 2)
+                resized_image = image.resize(new_size)
+                resized_image.save(buffer, format="JPEG")
+                encoded_image = base64.b64encode(buffer.getvalue())
+                print(str(encoded_image)[2:-1])
+                return encoded_image
         
     def publishMQTT(self, topic, client):
         if self.takeAPicture:
@@ -98,6 +127,7 @@ class MQTTClientHandler:
         client.on_message = self.on_message
     
     def reqAndRespHandler(self, client):
+        self.capturePicture()
         self.subscribeMQTT(take_pic_topic, client)
         #print("lmao")
         if self.takeAPicture:
