@@ -3,10 +3,17 @@ from pathlib import Path
 import time
 
 fileCount = 0
-camera = 0
+camera = '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0'
+previousMillis = 0
+
+DELAY = 1000
+
+def currentMillis():
+    return round(time.time() * 1000)
+
 
 def main(args=None):
-    global fileCount, camera
+    global fileCount, previousMillis, camera
     cap = cv.VideoCapture(camera)
     cap.set(cv.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv.CAP_PROP_FRAME_HEIGHT, 480)    
@@ -19,21 +26,23 @@ def main(args=None):
         if result:
             cv.imshow("welp", image)
 
-            myFile = Path(f"./dataset/trash{fileCount}.png")
-            if not myFile.is_file():
-                cv.imwrite(f"./dataset/trash{fileCount}.png", image)
-                fileCount += 1
-            else:
-                while True:
-                    myFile = Path(f"./dataset/trash{fileCount}.png")
-                    if myFile.is_file():
-                        fileCount += 1
-                    else:
-                        break
+            if currentMillis() - previousMillis >= DELAY:
+                myFile = Path(f"./dataset/trash{fileCount}.png")
+                if not myFile.is_file():
+                    cv.imwrite(f"./dataset/trash{fileCount}.png", image)
+                    fileCount += 1
+                else:
+                    while True:
+                        myFile = Path(f"./dataset/trash{fileCount}.png")
+                        if myFile.is_file():
+                            fileCount += 1
+                        else:
+                            break
+                previousMillis = currentMillis()
         else:
             print("No image detected. Please try again")
         
-        time.sleep(2)
+        
 
         if cv.waitKey(33) == ord('q'):
             cv.destroyAllWindows()
