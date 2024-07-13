@@ -41,6 +41,15 @@ serial_id = "/dev/serial/by-id/"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 cam_id = "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
+image_path = "/home/Group_11/MSD_Group11_ws/picTaken.jpg"
+AUTOTAKE_PHOTO_DELAY = 60000    # 1 minute delay
+#create a rectangle at left side of screen
+ZONE_POLYGON = np.array([
+    [0.1,0.7],
+    [0.9,0.7],
+    [0.9, 1],
+    [0.1, 1]
+])
 
 # GPIO
 relayPin = 17   # GPIO 17
@@ -53,24 +62,18 @@ sensor_topic = f"/group_11/{dustbin_ID}/sensor_data"
 waste_topic = f"/group_11/{dustbin_ID}/waste_details"
 
 
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="YOLOv8 Live")
-    parser.add_argument(
-        "--webcam-resolution",
-        default=[1280, 720],
-        nargs=2,
-        type=int
-    )
-    args = parser.parse_args()
-    return args
 
-
+# -------------------------
+#   serialHandler class
+# -------------------------
 class serialHandler():
     # initialize the class and the serial port
     def __init__(self):
         super().__init__()
         self.trashName = ""
         self.whichBinPartition = 0
+        self.objectDetected = False
+        self.inductiveTrig = False
 
         while True:
             try:
@@ -103,6 +106,8 @@ class serialHandler():
             incomingSerial = self.arduinoPort.readline()
             dataToString = str(incomingSerial)
             splitData = dataToString[2:-5].split("/")
+            self.objectDetected = splitData[0]
+            self.inductiveTrig = splitData[1]
 
         except SerialException or OSError:
             self.disconnected = True
@@ -121,30 +126,70 @@ class serialHandler():
             self.reopenPort()
             #self.get_logger().error("ESP32 connection lost! Try replugging the USB cable and restart...")
 
+    def mainFunction(self):
+        self.serialReceive()
+        self.serialTransmit()
+
+
+# ----------------------
+#   cameraHandler class
+# ----------------------
+
+# TODO:
+# 1) Check if the image value is being passed to other parts of the code correctly or not
 
 class cameraHandler():
     # initialize the class and the camera
     def __init__(self):
         super().__init__()
         self.takeAPicture = False
-        self.prevDetectTime = 0
+        self.prevInterruptTime = 0
+        self.timerInterrupt = False
         self.gotPic = False
         self.result = None
         self.image = None
+        self.inductiveTrig = False
+        self.detectedTrash = []
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
         self.model = YOLO("yolov8n.pt")
 
+        #Supervision Tracking function
+        self.tracker = sv.ByteTrack()
+
+        #Color for each class for tracking and label
+        self.colors = sv.ColorPalette.from_hex(['#0000ff',	'#5D3FD3','#ff0000'])
+
+        #Draw box on tracking object
+        self.box_annotator = sv.BoxCornerAnnotator(color= self.colors,thickness=5,corner_length = 15)
+
+        #label info on the traking object
+        self.label_annotator = sv.LabelAnnotator(color=self.colors)
+
+        #create instance of polygon for zone
+        self.zone_polygon = (ZONE_POLYGON * np.array((FRAME_WIDTH, FRAME_HEIGHT))).astype(int)
+        self.zone = sv.PolygonZone(polygon = self.zone_polygon, frame_resolution_wh= (FRAME_WIDTH, FRAME_HEIGHT))
+        self.zone_annotator = sv.PolygonZoneAnnotator(zone=self.zone, color=sv.Color.green())
+
+
+    def currentMillis():
+        return round(time.time() * 1000)
+
+    def videoStream(self):
+        if self.takeAPicture or self.inductiveTrig or self.timerInterrupt:
+            self.result, self.image = self.cap.read()
+            if self.result:
+                self.gotPic = True
+            else:
+                self.gotPic = False
 
     # class method to handle camera taking photos
     def capturePicture(self):
-        self.result, self.image = self.cap.read()
         if self.takeAPicture:
             # if there is image data, save it as picTaken.JPG in the current directory
-            if self.result:
-                self.gotPic = True
+            if self.gotPic:
                 myFile = Path(f"picTaken.jpg")
                 if myFile.is_file():
                     try:
@@ -155,21 +200,61 @@ class cameraHandler():
 
             # otherwise, print an error message
             else:
-                self.gotPic = False
                 print("No image detected. Please try again")
 
     # since Raspberry Pi 5 is still not a good computer to do live detection, only 
     def detectTrashFromImage(self):
         # detect the objects in the color images
-        results = self.model.predict(source = color_image1, boxes = False, verbose = False, show = False, conf = 0.20, max_det = 3)[0]
-        names = self.model.names
-        detections = sv.Detections.from_ultralytics(results)
+        if self.gotPic:
+            self.detectedTrash = []
+            results = self.model.predict(source = self.image, boxes = False, verbose = False, show = False, conf = 0.20, max_det = 3)[0]
+            names = self.model.names
+            detections = sv.Detections.from_ultralytics(results)
+
+            # display the details of the detections at the top of each object's bounding boxes
+            labels = [
+                f"{self.model.model.names[class_id]} {confidence:0.2f} {results.boxes.xyxy[0][0]}"
+                for _, _, confidence, class_id, _
+                in detections
+            ]
+
+            for r in results:
+                for c in r.boxes.cls:
+                    self.detectedTrash.append(names[int(c)])
+            
+            #Draw the box on screen
+            color_image1 = self.box_annotator.annotate(scene=self.image,detections=detections)
+
+            #Draw the labels on screen
+            Color_Image1 = self.label_annotator.annotate(
+                scene=self.image, detections=detections, labels=labels)
+            
+            #Trigger when something is in the zone
+            self.zone.trigger(detections = detections)
+            self.image = self.zone_annotator.annotate(scene=self.image)
+            self.imgColor = color_image1
+            #Display the results
+            #cv2.imshow('yolov8', frame)
 
 
+            self.prevInterruptTime = self.currentMillis()   # reset the previous interrupt time
 
 
+    def mainFunction(self):
+        # if there is no trash for quite some time already, automatically take a photo every set period to 
+        if self.currentMillis() - self.prevInterruptTime >= AUTOTAKE_PHOTO_DELAY:
+            self.timerInterrupt = True
+            self.prevInterruptTime = self.currentMillis()
+        self.videoStream()
+        self.capturePicture()
+        self.detectTrashFromImage()
+        self.timerInterrupt = False
 
-# GPIOHandler class to control any GPIO pins on the Raspberry Pi 5
+
+# ----------------------
+#   GPIOHandler class
+# ----------------------
+# to control any GPIO pins on the Raspberry Pi 5
 # Currently, it is used to control a white LED strip only through a relay 
 class GPIOHandler:
     # initialize the class and the GPIO
@@ -189,6 +274,9 @@ class GPIOHandler:
                 self.relayLine.set_value(0) # turn off the LED
         except Exception:
             self.relayLine.release()
+
+    def mainFunction(self):
+        self.controlLEDStrip()
 
 
 # MQTTClientHandler class to take care of all MQTT-related data transmissions
@@ -261,8 +349,7 @@ class MQTTClientHandler:
     
     # class method to handle message publishing task
     def publishMQTT(self, topic, client):
-        if self.takeAPicture:
-            msg = self.imgToBase64()
+        msg = self.imgToBase64()
         result = client.publish(topic, msg)
         status = result[0]
 
@@ -277,24 +364,30 @@ class MQTTClientHandler:
         client.on_message = self.on_message
 
     # MAIN class method to execute all MQTT tasks
-    def reqAndRespHandler(self, client):
-        self.capturePicture()
+    def mainFunction(self, client):
         self.subscribeMQTT(take_pic_topic, client)
         if self.takeAPicture:
             self.publishMQTT(img_topic, client)
             self.takeAPicture = False
 
+
+# --------------
+# MAIN FUNCTION
+# --------------
 def main(args = None):
     client_class = MQTTClientHandler()
     client = client_class.connectMQTT()
 
     camera_handler = cameraHandler()
     gpio_handler = GPIOHandler()
+    serial_handler = serialHandler()
 
     while True:
-        gpio_handler.controlLEDStrip()
+        camera_handler.mainFunction()
+        gpio_handler.mainFunction()
+        serial_handler.mainFunction()
         client.loop_start()    
-        client_class.reqAndRespHandler(client)
+        client_class.mainFunction(client)
         client.loop_stop() 
 
 if __name__ == "__main__":

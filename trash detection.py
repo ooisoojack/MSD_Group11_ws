@@ -24,7 +24,7 @@ def main(args=None):
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
 
-    model = YOLO("yolov8n.pt")
+    model = YOLO("Trash Detection.pt")
 
     # bounding box of the objects
     # see https://supervision.roboflow.com/annotators/
