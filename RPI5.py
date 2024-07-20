@@ -9,7 +9,7 @@
 import os
 import serial
 from serial import SerialException
-import gpiod
+#import gpiod
 from paho.mqtt import client as mqtt_client
 from PIL import Image
 from io import BytesIO
@@ -30,8 +30,8 @@ FIRST_RECONNECT_DELAY = 1
 RECONNECT_RATE = 2
 MAX_RECONNECT_COUNT = 12
 MAX_RECONNECT_DELAY = 60
-broker = "localhost"
-port = 1883
+broker = "0.tcp.ap.ngrok.io"
+port = 18518
 client_id = f'python-mqtt-{random.randint(0, 1000)}'
 
 # serial comms parameters
@@ -61,6 +61,9 @@ take_pic_topic = "/group_11/take_picture"
 sensor_topic = f"/group_11/{dustbin_ID}/sensor_data"
 waste_topic = f"/group_11/{dustbin_ID}/waste_details"
 
+# logics
+gotPic = False
+takeAPicture = False
 
 
 # -------------------------
@@ -142,10 +145,7 @@ class cameraHandler():
     # initialize the class and the camera
     def __init__(self):
         super().__init__()
-        self.takeAPicture = False
-        self.prevInterruptTime = 0
-        self.timerInterrupt = False
-        self.gotPic = False
+        self.prevDetectTime = 0
         self.result = None
         self.image = None
         self.inductiveTrig = False
@@ -187,9 +187,13 @@ class cameraHandler():
 
     # class method to handle camera taking photos
     def capturePicture(self):
-        if self.takeAPicture:
+        global gotPic, takeAPicture
+        #print(takeAPicture)
+        self.result, self.image = self.cap.read()
+        if takeAPicture:
             # if there is image data, save it as picTaken.JPG in the current directory
-            if self.gotPic:
+            if self.result:
+                gotPic = True
                 myFile = Path(f"picTaken.jpg")
                 if myFile.is_file():
                     try:
@@ -200,6 +204,7 @@ class cameraHandler():
 
             # otherwise, print an error message
             else:
+                gotPic = False
                 print("No image detected. Please try again")
 
     # since Raspberry Pi 5 is still not a good computer to do live detection, only 
@@ -256,27 +261,27 @@ class cameraHandler():
 # ----------------------
 # to control any GPIO pins on the Raspberry Pi 5
 # Currently, it is used to control a white LED strip only through a relay 
-class GPIOHandler:
-    # initialize the class and the GPIO
-    def __init__(self):
-        super().__init__()
-        self.takeAPicture = False
-        self.chip = gpiod.Chip('gpiochip4') 
-        self.relayLine = self.chip.get_line(relayPin)
-        self.relayLine.request(consumer="LED", type=gpiod.LINE_REQ_DIR_OUT)
+# class GPIOHandler:
+#     # initialize the class and the GPIO
+#     def __init__(self):
+#         super().__init__()
+#         self.takeAPicture = False
+#         self.chip = gpiod.Chip('gpiochip4') 
+#         self.relayLine = self.chip.get_line(relayPin)
+#         self.relayLine.request(consumer="LED", type=gpiod.LINE_REQ_DIR_OUT)
     
-    # class method to control the LED strip
-    def controlLEDStrip(self):
-        try:
-            if self.takeAPicture:
-                self.relayLine.set_value(1) # turn on the LED
-            else:
-                self.relayLine.set_value(0) # turn off the LED
-        except Exception:
-            self.relayLine.release()
+#     # class method to control the LED strip
+#     def controlLEDStrip(self):
+#         try:
+#             if self.takeAPicture:
+#                 self.relayLine.set_value(1) # turn on the LED
+#             else:
+#                 self.relayLine.set_value(0) # turn off the LED
+#         except Exception:
+#             self.relayLine.release()
 
-    def mainFunction(self):
-        self.controlLEDStrip()
+    # def mainFunction(self):
+    #     self.controlLEDStrip()
 
 
 # MQTTClientHandler class to take care of all MQTT-related data transmissions
@@ -284,8 +289,6 @@ class MQTTClientHandler:
     # initialize the class and the camera
     def __init__(self):
         super().__init__()
-        self.takeAPicture = False
-        self.gotPic = False
 
     # handles connection to the Mosquitto MQTT
     def onConnect(self, client, userdata, flags, rc, properties = None):
@@ -324,16 +327,18 @@ class MQTTClientHandler:
     
     # class method to handle MQTT data coming from NodeRED or other sources
     def on_message(self, client, userdata, msg):
+        global takeAPicture
         print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
 
         # if we received a request to take a photo
         if msg.topic == '/group_11/take_picture':
-            self.takeAPicture = msg.payload.decode()
+            takeAPicture = msg.payload.decode()
 
     # class method to handle conversion of RGB frame to base64 format
     def imgToBase64(self):
+        global gotPic
         # Open the image file
-        if self.gotPic:
+        if gotPic:
             with open("picTaken.jpg", "rb") as f:
                 buffer = BytesIO()
                 image = Image.open(f)
@@ -349,7 +354,8 @@ class MQTTClientHandler:
     
     # class method to handle message publishing task
     def publishMQTT(self, topic, client):
-        msg = self.imgToBase64()
+        if takeAPicture:
+            msg = self.imgToBase64()
         result = client.publish(topic, msg)
         status = result[0]
 
@@ -365,10 +371,11 @@ class MQTTClientHandler:
 
     # MAIN class method to execute all MQTT tasks
     def mainFunction(self, client):
+        global takeAPicture
         self.subscribeMQTT(take_pic_topic, client)
-        if self.takeAPicture:
+        if takeAPicture:
             self.publishMQTT(img_topic, client)
-            self.takeAPicture = False
+            takeAPicture = False
 
 
 # --------------
@@ -379,13 +386,13 @@ def main(args = None):
     client = client_class.connectMQTT()
 
     camera_handler = cameraHandler()
-    gpio_handler = GPIOHandler()
-    serial_handler = serialHandler()
+    #gpio_handler = GPIOHandler()
+    #serial_handler = serialHandler()
 
     while True:
         camera_handler.mainFunction()
-        gpio_handler.mainFunction()
-        serial_handler.mainFunction()
+        #gpio_handler.mainFunction()
+        #serial_handler.mainFunction()
         client.loop_start()    
         client_class.mainFunction(client)
         client.loop_stop() 
