@@ -90,6 +90,12 @@ got_electronic_waste = 0
 got_general_dry_waste = 0
 got_general_wet_waste = 0
 
+current_metal_waste = 0
+current_battery_waste = 0
+current_electronic_waste = 0
+current_general_dry_waste = 0
+current_general_wet_waste = 0
+
 metal_waste_level = 0
 battery_waste_level = 0
 electronic_waste_level = 0
@@ -164,6 +170,9 @@ class serialHandler():
         global continueOp, objectDetected
         global metal_waste_level, battery_waste_level, electronic_waste_level, general_dry_waste_level, general_wet_waste_level
         global co_level, methane_level, air_quality_level, temperature, humidity
+        global got_general_dry_waste, got_general_wet_waste, got_battery_waste, got_electronic_waste, got_metal_waste
+        global current_battery_waste, current_electronic_waste, current_general_dry_waste, current_general_wet_waste, current_metal_waste
+
         try:
             incomingSerial = self.arduinoPort.readline()
             dataToString = str(incomingSerial)
@@ -186,9 +195,22 @@ class serialHandler():
             electronic_waste_level = float(levelSplitData[2])
             general_dry_waste_level = float(levelSplitData[3])
             general_wet_waste_level = float(levelSplitData[4])
-            
-            sensorSplitData = splitData[2].split("/")
 
+            gotWasteSplitData = splitData[3].split("/")
+            got_metal_waste = int(gotWasteSplitData[0])
+            got_battery_waste = int(gotWasteSplitData[1])
+            got_electronic_waste = int(gotWasteSplitData[2])
+            got_general_dry_waste = int(gotWasteSplitData[3])
+            got_general_wet_waste = int(gotWasteSplitData[4])
+
+            currentWasteSplitData = splitData[4].split("/")
+            current_metal_waste = int(currentWasteSplitData[0])
+            current_battery_waste = int(currentWasteSplitData[1])
+            current_electronic_waste = int(currentWasteSplitData[2])
+            current_general_dry_waste = int(currentWasteSplitData[3])
+            current_general_wet_waste = int(currentWasteSplitData[4])
+
+            sensorSplitData = splitData[5].split("/")
             co_level = float(sensorSplitData[0])
             methane_level = float(sensorSplitData[1])
             air_quality_level = float(sensorSplitData[2])
@@ -203,56 +225,25 @@ class serialHandler():
 
     def serialTransmit(self):
         global autoTakeAPic, gotPic, detectedTrash
-        global got_general_dry_waste, got_general_wet_waste, got_battery_waste, got_electronic_waste, got_metal_waste
 
         if autoTakeAPic and gotPic:
             if detectedTrash[0] == "Metal":
-                self.whichBinPartition = 0
-                got_metal_waste = 1
-                got_battery_waste = 0
-                got_electronic_waste = 0
-                got_general_wet_waste = 0
-                got_general_dry_waste = 0
+                self.whichBinPartition = 1
 
             elif detectedTrash[0] == "Battery":
-                self.whichBinPartition = 1
-                got_metal_waste = 0
-                got_battery_waste = 1
-                got_electronic_waste = 0
-                got_general_wet_waste = 0
-                got_general_dry_waste = 0
+                self.whichBinPartition = 2
 
             elif detectedTrash[0] == "Electronic Waste":
-                self.whichBinPartition = 2
-                got_metal_waste = 0
-                got_battery_waste = 0
-                got_electronic_waste = 1
-                got_general_wet_waste = 0
-                got_general_dry_waste = 0
+                self.whichBinPartition = 3
 
             elif detectedTrash[0] == "General Dry Waste":
-                self.whichBinPartition = 3
-                got_metal_waste = 0
-                got_battery_waste = 0
-                got_electronic_waste = 0
-                got_general_wet_waste = 0
-                got_general_dry_waste = 1
-
+                self.whichBinPartition = 4
 
             elif detectedTrash[0] == "General Wet Waste":
-                self.whichBinPartition = 4
-                got_metal_waste = 0
-                got_battery_waste = 0
-                got_electronic_waste = 0
-                got_general_wet_waste = 1
-                got_general_dry_waste = 0
+                self.whichBinPartition = 5
             
             else:
-                got_metal_waste = 0
-                got_battery_waste = 0
-                got_electronic_waste = 0
-                got_general_wet_waste = 0
-                got_general_dry_waste = 0
+                self.whichBinPartition = 0
 
             try:
                 self.arduinoPort.write(f'{self.whichBinPartition} {continueOp}\r'.encode())
@@ -560,6 +551,11 @@ class MQTTClientHandler:
                     "dustbin_electronic_waste": got_electronic_waste,
                     "dustbin_general_dry_waste": got_general_dry_waste,
                     "dustbin_general_wet_waste": got_general_wet_waste,
+                    "current_metal_waste": current_metal_waste,
+                    "current_battery_waste": current_battery_waste,
+                    "current_electronic_waste": current_electronic_waste,
+                    "current_general_dry_waste": current_general_dry_waste,
+                    "current_general_wet_waste": current_general_wet_waste,
                     "level_metal_waste": metal_waste_level,
                     "level_battery_waste": battery_waste_level,
                     "level_electronic_waste": electronic_waste_level,
