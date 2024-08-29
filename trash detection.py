@@ -24,7 +24,7 @@ def main(args=None):
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
 
-    model = YOLO("Trash Detection.pt")
+    model = YOLO("v17.pt")
 
     # bounding box of the objects
     # see https://supervision.roboflow.com/annotators/
@@ -55,12 +55,12 @@ def main(args=None):
 
         result = model.predict(source=frame, show_boxes=False, verbose=False, show=False, conf=0.20)[0]
         
-        detections = sv.Detections.from_yolov8(result)
+        detections = sv.Detections.from_ultralytics(result)
 
         # display the details of the detections at the top of each object's bounding boxes
         labels = [
             f"{model.model.names[class_id]} {confidence:0.2f} {result.boxes.xyxy[0][0]}"
-            for _, confidence, class_id, _
+            for _, _, confidence, class_id, _
             in detections
         ]
 
