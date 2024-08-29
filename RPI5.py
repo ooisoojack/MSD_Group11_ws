@@ -60,7 +60,7 @@ serial_id = "/dev/serial/by-id/"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 cam_id = "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
-AUTOTAKE_PHOTO_DELAY = 10000    # 1 minute delay
+AUTOTAKE_PHOTO_DELAY = 60000    # 1 minute delay
 #create a rectangle at left side of screen
 ZONE_POLYGON = np.array([
     [0.1,0.7],
@@ -76,18 +76,12 @@ relayPin = 17   # GPIO 17
 dustbin_ID = 1
 img_topic = f"/group_11/{dustbin_ID}/img_frame"
 take_pic_topic = "/group_11/take_picture"
-sensor_topic = f"/group_11/{dustbin_ID}/sensor_data"
-metal_waste_topic = f"/group_11/{dustbin_ID}/metal_waste"
-battery_waste_topic = f"/group_11/{dustbin_ID}/battery_waste"
-electronic_waste_topic = f"/group_11/{dustbin_ID}/electronic_waste"
-general_dry_waste_topic = f"/group_11/{dustbin_ID}/general_dry_waste"
-general_wet_waste_topic = f"/group_11/{dustbin_ID}/general_wet_waste"
+disable_all_topic = "/group_11/disable_all"
 
-rssi_topic = f"/group_11/{dustbin_ID}/rssi"
-dustbin_ID_topic = f"/group_11/{dustbin_ID}/id"
-cpu_usage_topic = f"/group_11/{dustbin_ID}/cpu_usage"
-ram_usage_topic = f"/group_11/{dustbin_ID}/ram_usage"
-cpu_temp_topic = f"/group_11/{dustbin_ID}/cpu_temp"
+id_topic = f"/group_11/{dustbin_ID}/id"
+sensor_topic = f"/group_11/{dustbin_ID}/sensor_details"
+waste_topic = f"/group_11/{dustbin_ID}/waste_details"
+dustbin_state_topic = f"/group_11/{dustbin_ID}/dustbin_state"
 
 
 got_metal_waste = 0
@@ -96,11 +90,24 @@ got_electronic_waste = 0
 got_general_dry_waste = 0
 got_general_wet_waste = 0
 
+metal_waste_level = 0
+battery_waste_level = 0
+electronic_waste_level = 0
+general_dry_waste_level = 0
+general_wet_waste_level = 0
+
+co_level = 0
+methane_level = 0
+air_quality_level = 0
+temperature = 0
+humidity = 0
 
 # logics
 gotPic = False
 autoTakeAPic = False
 manualTakeAPic = False
+continueOp = True
+objectDetected = False
 
 # image data
 detectedTrash = []
@@ -119,8 +126,6 @@ class serialHandler():
         super().__init__()
         self.trashName = ""
         self.whichBinPartition = 0
-        self.objectDetected = False
-        self.continueOp = False
 
         while True:
             try:
@@ -156,10 +161,13 @@ class serialHandler():
     # ------------------------------
 
     def serialReceive(self):
+        global continueOp, objectDetected
+        global metal_waste_level, battery_waste_level, electronic_waste_level, general_dry_waste_level, general_wet_waste_level
+        global co_level, methane_level, air_quality_level, temperature, humidity
         try:
             incomingSerial = self.arduinoPort.readline()
             dataToString = str(incomingSerial)
-            splitData = dataToString[2:-5].split("/")
+            splitData = dataToString[2:-5].split(":")
 
             if int(splitData[0]) == 0:
                 self.objectDetected = False
@@ -167,9 +175,26 @@ class serialHandler():
                 self.objectDetected = True
 
             if int(splitData[1]) == 0:
-                self.continueOp = False
+                continueOp = False
             else:
-                self.continueOp = True
+                continueOp = True
+
+            levelSplitData = splitData[2].split("/")
+
+            metal_waste_level = float(levelSplitData[0])
+            battery_waste_level = float(levelSplitData[1])
+            electronic_waste_level = float(levelSplitData[2])
+            general_dry_waste_level = float(levelSplitData[3])
+            general_wet_waste_level = float(levelSplitData[4])
+            
+            sensorSplitData = splitData[2].split("/")
+
+            co_level = float(sensorSplitData[0])
+            methane_level = float(sensorSplitData[1])
+            air_quality_level = float(sensorSplitData[2])
+            temperature = float(sensorSplitData[3])
+            humidity = float(sensorSplitData[4])
+
 
         except SerialException or OSError:
             self.disconnected = True
@@ -230,7 +255,7 @@ class serialHandler():
                 got_general_dry_waste = 0
 
             try:
-                self.arduinoPort.write(f'{self.whichBinPartition}\r'.encode())
+                self.arduinoPort.write(f'{self.whichBinPartition} {continueOp}\r'.encode())
                 self.disconnected = False
 
             except SerialException:
@@ -274,7 +299,7 @@ class cameraHandler():
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
-        self.model = YOLO("yolov8n.pt")
+        self.model = YOLO("v17.pt")
 
         #Supervision Tracking function
         self.tracker = sv.ByteTrack()
@@ -379,14 +404,14 @@ class cameraHandler():
 
     def mainFunction(self):
         global gotPic, autoTakeAPic
-
-        # if there is no trash for quite some time already, automatically take a photo every time the set period of  
-        if self.currentMillis() - self.prevInterruptTime >= AUTOTAKE_PHOTO_DELAY:
-            print("Timeout triggered, taking a photo with detections...")
-            autoTakeAPic = True
-            self.prevInterruptTime = self.currentMillis()
-        self.capturePicture()
-        self.detectTrashFromImage()
+        if continueOp:
+            # if there is no trash for quite some time already, automatically take a photo every time the set period of  
+            if self.currentMillis() - self.prevInterruptTime >= AUTOTAKE_PHOTO_DELAY:
+                print("Timeout triggered, taking a photo with detections...")
+                autoTakeAPic = True
+                self.prevInterruptTime = self.currentMillis()
+            self.capturePicture()
+            self.detectTrashFromImage()
 
 
 
@@ -423,7 +448,8 @@ class GPIOHandler:
             self.relayLine.release()
 
     def mainFunction(self):
-        self.controlLEDStrip()
+        if continueOp:
+            self.controlLEDStrip()
 
 
 # -------------------------
@@ -442,6 +468,8 @@ class MQTTClientHandler:
 
         self.doneConversion = False
         self.msgToPub = None
+        self.prevSendMillis = self.currentMillis()
+
     # ------------------------------------
     # MQTT CONNECTION HANDLING FUNCTIONS
     # ------------------------------------
@@ -488,13 +516,21 @@ class MQTTClientHandler:
 
     # class method to handle MQTT data coming from NodeRED or other sources
     def on_message(self, client, userdata, msg):
-        global takeAPicture, manualTakeAPicture
+        global autoTakeAPic, manualTakeAPic, continueOp
         print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
 
         # if we received a request to take a photo
         if msg.topic == '/group_11/take_picture':
             print("Calling Camera Handler to take photo...")
-            manualTakeAPicture = msg.payload.decode()
+            manualTakeAPic = msg.payload.decode()
+
+        elif msg.topic == '/group_11/disable_all':
+            if msg.payload.decode() == "true":
+                print("Dustbin is disabled!")
+                continueOp = False
+            elif msg.payload.decode() == "false":
+                print("Dustbin is enabled!")
+                continueOp = True
 
     # class method to handle message publishing task
     def publishMQTT(self, topic, client):
@@ -502,35 +538,81 @@ class MQTTClientHandler:
 
         # if we received a request to take a picture, receive the base64 code of the picture
         if topic == img_topic and gotPic:
-            self.msgToPub = self.imgToBase64()
+            image = str(self.imgToBase64())
+            jsonData = [
+                {
+                    "image": image[2:-1]
+                },
+                {
+                    "dustbin_id": dustbin_ID
+                }
+            ]
+
+            self.msgToPub = json.dumps(jsonData)
+
             self.doneConversion = True
+
+        elif topic == waste_topic:
+            jsonData = [
+                {
+                    "dustbin_metal_waste": got_metal_waste,
+                    "dustbin_battery_waste": got_battery_waste,
+                    "dustbin_electronic_waste": got_electronic_waste,
+                    "dustbin_general_dry_waste": got_general_dry_waste,
+                    "dustbin_general_wet_waste": got_general_wet_waste,
+                    "level_metal_waste": metal_waste_level,
+                    "level_battery_waste": battery_waste_level,
+                    "level_electronic_waste": electronic_waste_level,
+                    "level_general_dry_waste": general_dry_waste_level,
+                    "level_general_wet_waste": general_wet_waste_level                      
+                },
+                {
+                    "dustbin_id": dustbin_ID
+                }
+            ]    
+            
+            self.msgToPub = json.dumps(jsonData)
+
+        elif topic == dustbin_state_topic:
+            try:
+                rssi = float(self.getRSSI("wlo1"))
+            except TypeError:
+                print("No RSSI value obtained!")
+                rssi = None
+
+            jsonData = [
+                {
+                    "dustbin_op": "Running" if continueOp else "Stopped",
+                    "dustbin_op_code": 1 if continueOp else 0,
+                    "dustbin_rssi": rssi,
+                    "dustbin_cpu_usage": self.getCPUUsage(),
+                    "dustbin_ram_usage": self.getRAMUsage(),
+                    "dustbin_cpu_temp": self.getCPUTemp()                    
+                },
+                {
+                    "dustbin_id": dustbin_ID,
+                }
+            ]
         
-        elif topic == rssi_topic:
-            self.msgToPub = self.getRSSI("wlo1")
-
-        elif topic ==  metal_waste_topic:
-            self.msgToPub = got_metal_waste
-
-        elif topic ==  battery_waste_topic:
-            self.msgToPub = got_battery_waste
-
-        elif topic ==  electronic_waste_topic:
-            self.msgToPub = got_electronic_waste
+            self.msgToPub = json.dumps(jsonData)
         
-        elif topic ==  general_dry_waste_topic:
-            self.msgToPub = got_general_dry_waste
+        elif topic == sensor_topic:
+            jsonData = [
+                {
+                    "dustbin_co_lvl": co_level,
+                    "dustbin_methane_lvl": methane_level,
+                    "dustbin_air_quality_lvl": air_quality_level,
+                    "dustbin_temperature": temperature,
+                    "dustbin_humidity": humidity                    
+                },
+                {
+                    "dustbin_id": dustbin_ID,
+                }
+            ]
+            self.msgToPub = json.dumps(jsonData)
 
-        elif topic ==  general_wet_waste_topic:
-            self.msgToPub = got_general_wet_waste
-
-        elif topic ==  cpu_usage_topic:
-            self.msgToPub = self.getCPUUsage()
-        
-        elif topic ==  ram_usage_topic:
-            self.msgToPub = self.getRAMUsage()
-
-        elif topic ==  cpu_temp_topic:
-            self.msgToPub = self.getCPUTemp()
+        elif topic == id_topic:
+            self.msgToPub = dustbin_ID
 
         if self.msgToPub != None:
             result = client.publish(topic, self.msgToPub)
@@ -599,8 +681,10 @@ class MQTTClientHandler:
                     image = Image.open(f)
 
                     # resize the image so that the base64 code is not too long
+                    # however this will result in blurry image
+                    # hence the scaling is removed
                     width, height = image.size
-                    new_size = (width // 2, height // 2)
+                    new_size = (width, height)
                     resized_image = image.resize(new_size)
                     resized_image.save(buffer, format="JPEG")
                     encoded_image = base64.b64encode(buffer.getvalue())
@@ -614,32 +698,39 @@ class MQTTClientHandler:
 
                     # resize the image so that the base64 code is not too long
                     width, height = image.size
-                    new_size = (width // 2, height // 2)
+                    new_size = (width, height)
                     resized_image = image.resize(new_size)
                     resized_image.save(buffer, format="JPEG")
                     encoded_image = base64.b64encode(buffer.getvalue())
                     print(str(encoded_image)[2:-1])
                     return encoded_image
 
+    def currentMillis(self):
+        return round(time.time() * 1000)
+
+
     # MAIN class method to execute all MQTT tasks
     def mainFunction(self, client):
         global autoTakeAPic, manualTakeAPic, gotPic
+        
         self.subscribeMQTT(take_pic_topic, client)
-        self.publishMQTT(img_topic, client)        
-        if self.doneConversion:
-            self.publishMQTT(rssi_topic, client)
-            self.publishMQTT(metal_waste_topic, client)
-            self.publishMQTT(battery_waste_topic, client)
-            self.publishMQTT(electronic_waste_topic, client)
-            self.publishMQTT(general_dry_waste_topic, client)
-            self.publishMQTT(general_wet_waste_topic, client)
-            self.publishMQTT(cpu_usage_topic, client)
-            self.publishMQTT(ram_usage_topic, client)
-            self.publishMQTT(cpu_temp_topic, client)
-            manualTakeAPic = False
-            autoTakeAPic = False
-            gotPic = False
-            self.doneConversion = False
+        self.subscribeMQTT(disable_all_topic, client)
+
+        if self.currentMillis() - self.prevSendMillis >= AUTOTAKE_PHOTO_DELAY:
+            self.prevSendMillis = self.currentMillis()
+            self.publishMQTT(dustbin_state_topic, client)
+        
+        if continueOp:
+            self.publishMQTT(img_topic, client)
+
+            if self.doneConversion:
+                self.publishMQTT(waste_topic, client)
+                self.publishMQTT(sensor_topic, client)
+
+                manualTakeAPic = False
+                autoTakeAPic = False
+                gotPic = False
+                self.doneConversion = False
 
 # --------------
 # MAIN FUNCTION
