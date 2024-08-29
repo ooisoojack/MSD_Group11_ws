@@ -14,6 +14,7 @@
 
 # import necessary modules
 import os
+import json
 import subprocess
 import psutil
 import serial
@@ -540,6 +541,7 @@ class MQTTClientHandler:
             else:
                 print(f"Failed to send message to topic {topic}")
         
+        # reset the message
         self.msgToPub = None
 
     # class method to handle message subscribing task
