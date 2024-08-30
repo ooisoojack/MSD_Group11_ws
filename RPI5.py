@@ -114,6 +114,7 @@ autoTakeAPic = False
 manualTakeAPic = False
 continueOp = True
 objectDetected = False
+callCleaner = False
 
 # image data
 detectedTrash = []
@@ -187,6 +188,11 @@ class serialHandler():
                 continueOp = False
             else:
                 continueOp = True
+
+            if int(splitData[2]) == 0:
+                callCleaner = False
+            else:
+                callCleaner = True
 
             levelSplitData = splitData[2].split("/")
 
@@ -403,6 +409,17 @@ class cameraHandler():
                 self.prevInterruptTime = self.currentMillis()
             self.capturePicture()
             self.detectTrashFromImage()
+
+
+
+# -------------------------
+# -------------------------
+#
+# TELEGRAM HANDLER CLASS
+#
+# -------------------------
+# -------------------------
+
 
 
 
