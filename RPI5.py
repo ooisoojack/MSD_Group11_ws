@@ -54,7 +54,7 @@ port = 1883
 client_id = f'python-mqtt-{random.randint(0, 1000)}'
 
 # serial comms parameters
-serial_id = "/dev/serial/by-id/"
+serial_id = "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
 
 # camera parameters
 FRAME_WIDTH = 640
@@ -115,6 +115,7 @@ manualTakeAPic = False
 continueOp = True
 objectDetected = False
 callCleaner = False
+beginParsing = False
 
 # image data
 detectedTrash = []
@@ -168,7 +169,7 @@ class serialHandler():
     # ------------------------------
 
     def serialReceive(self):
-        global continueOp, objectDetected
+        global continueOp, objectDetected, beginParsing
         global metal_waste_level, battery_waste_level, electronic_waste_level, general_dry_waste_level, general_wet_waste_level
         global co_level, methane_level, air_quality_level, temperature, humidity
         global got_general_dry_waste, got_general_wet_waste, got_battery_waste, got_electronic_waste, got_metal_waste
@@ -177,56 +178,63 @@ class serialHandler():
         try:
             incomingSerial = self.arduinoPort.readline()
             dataToString = str(incomingSerial)
-            splitData = dataToString[2:-5].split(":")
+            print(dataToString)
+            
+            if beginParsing:
 
-            if int(splitData[0]) == 0:
-                self.objectDetected = False
-            else:
-                self.objectDetected = True
+                splitData = dataToString[2:-5].split(":")
 
-            if int(splitData[1]) == 0:
-                continueOp = False
-            else:
-                continueOp = True
+                if int(splitData[0]) == 0:
+                    self.objectDetected = False
+                else:
+                    self.objectDetected = True
 
-            if int(splitData[2]) == 0:
-                callCleaner = False
-            else:
-                callCleaner = True
+                if int(splitData[1]) == 0:
+                    continueOp = False
+                else:
+                    continueOp = True
 
-            levelSplitData = splitData[2].split("/")
+                if int(splitData[2]) == 0:
+                    callCleaner = False
+                else:
+                    callCleaner = True
 
-            metal_waste_level = float(levelSplitData[0])
-            battery_waste_level = float(levelSplitData[1])
-            electronic_waste_level = float(levelSplitData[2])
-            general_dry_waste_level = float(levelSplitData[3])
-            general_wet_waste_level = float(levelSplitData[4])
+                levelSplitData = splitData[3].split("/")
+                #print(levelSplitData)
+                metal_waste_level = float(levelSplitData[0])
+                battery_waste_level = float(levelSplitData[1])
+                electronic_waste_level = float(levelSplitData[2])
+                general_dry_waste_level = float(levelSplitData[3])
+                general_wet_waste_level = float(levelSplitData[4])
 
-            gotWasteSplitData = splitData[3].split("/")
-            got_metal_waste = int(gotWasteSplitData[0])
-            got_battery_waste = int(gotWasteSplitData[1])
-            got_electronic_waste = int(gotWasteSplitData[2])
-            got_general_dry_waste = int(gotWasteSplitData[3])
-            got_general_wet_waste = int(gotWasteSplitData[4])
+                gotWasteSplitData = splitData[4].split("/")
+                got_metal_waste = int(gotWasteSplitData[0])
+                got_battery_waste = int(gotWasteSplitData[1])
+                got_electronic_waste = int(gotWasteSplitData[2])
+                got_general_dry_waste = int(gotWasteSplitData[3])
+                got_general_wet_waste = int(gotWasteSplitData[4])
 
-            currentWasteSplitData = splitData[4].split("/")
-            current_metal_waste = int(currentWasteSplitData[0])
-            current_battery_waste = int(currentWasteSplitData[1])
-            current_electronic_waste = int(currentWasteSplitData[2])
-            current_general_dry_waste = int(currentWasteSplitData[3])
-            current_general_wet_waste = int(currentWasteSplitData[4])
+                currentWasteSplitData = splitData[5].split("/")
+                current_metal_waste = int(currentWasteSplitData[0])
+                current_battery_waste = int(currentWasteSplitData[1])
+                current_electronic_waste = int(currentWasteSplitData[2])
+                current_general_dry_waste = int(currentWasteSplitData[3])
+                current_general_wet_waste = int(currentWasteSplitData[4])
 
-            sensorSplitData = splitData[5].split("/")
-            co_level = float(sensorSplitData[0])
-            methane_level = float(sensorSplitData[1])
-            air_quality_level = float(sensorSplitData[2])
-            temperature = float(sensorSplitData[3])
-            humidity = float(sensorSplitData[4])
+                sensorSplitData = splitData[6].split("/")
+                co_level = float(sensorSplitData[0])
+                methane_level = float(sensorSplitData[1])
+                air_quality_level = float(sensorSplitData[2])
+                temperature = float(sensorSplitData[3])
+                humidity = float(sensorSplitData[4])
 
 
         except SerialException or OSError:
             self.disconnected = True
             self.reopenPort()
+
+        if dataToString[2:-5] == "!":
+            beginParsing = True
 
 
     def serialTransmit(self):
@@ -754,12 +762,12 @@ def main(args = None):
 
     camera_handler = cameraHandler()
     #gpio_handler = GPIOHandler()
-    #serial_handler = serialHandler()
+    serial_handler = serialHandler()
 
     while True:
         camera_handler.mainFunction()
         #gpio_handler.mainFunction()
-        #serial_handler.mainFunction()
+        serial_handler.mainFunction()
         client.loop_start()    
         client_class.mainFunction(client)
         client.loop_stop() 
