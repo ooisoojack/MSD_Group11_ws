@@ -19,6 +19,7 @@ if __name__ == "__main__":
     cpu_usage = get_cpu_usage()
     total_memory, used_memory, ram_usage_percent = get_ram_usage()
     cpu_temp = get_cpu_temp()
+    #print(cpu_temp)
     # cpu_temp_core = cpu_temp['coretemp']
     # cpu_temp_core_overall = cpu_temp_core
 
@@ -26,5 +27,5 @@ if __name__ == "__main__":
     print(f"Total RAM: {total_memory / (1024 ** 3):.2f} GB")
     print(f"Used RAM: {used_memory / (1024 ** 3):.2f} GB")
     print(f"RAM Usage: {ram_usage_percent}%")
-    print(f"CPU Temperature: {cpu_temp['coretemp'][0].current}C")
+    print(f"CPU Temperature: {cpu_temp['cpu_thermal'][0].current}C")
 

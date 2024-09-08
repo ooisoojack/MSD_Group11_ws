@@ -19,7 +19,7 @@ import subprocess
 import psutil
 import serial
 from serial import SerialException
-import gpiod
+from gpiozero import LED
 from paho.mqtt import client as mqtt_client
 from PIL import Image
 from io import BytesIO
@@ -59,8 +59,8 @@ serial_id = "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-por
 # camera parameters
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
-cam_id = "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
-AUTOTAKE_PHOTO_DELAY = 60000    # 1 minute delay
+#cam_id = "usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
+AUTOTAKE_PHOTO_DELAY = 10000    # 1 minute delay
 #create a rectangle at left side of screen
 ZONE_POLYGON = np.array([
     [0.1,0.7],
@@ -116,6 +116,8 @@ continueOp = True
 objectDetected = False
 callCleaner = False
 beginParsing = False
+overrideStop = 0 # 0 - no need to stop, 1 - stop the whole thing!
+whichBinPartition = 0
 
 # image data
 detectedTrash = []
@@ -134,7 +136,9 @@ class serialHandler():
         super().__init__()
         self.trashName = ""
         self.whichBinPartition = 0
-
+        self.errMsgOnce = False
+        self.count = 0
+        self.outsideCount = 0
         while True:
             try:
                 self.arduinoPort = serial.Serial(f'/dev/serial/by-id/{serial_id}', 115200)
@@ -153,7 +157,7 @@ class serialHandler():
     # attempt to reopen the ESP32 port if a serial exception is raised
     def reopenPort(self):
         try:
-            self.arduinoPort = serial.Serial(f'/dev/serial/by-path/{serial_id}', 115200)
+            self.arduinoPort = serial.Serial(f'/dev/serial/by-id/{serial_id}', 115200)
             print("Serial connection reestablished")
  
         # if the port failed to be opened
@@ -169,7 +173,7 @@ class serialHandler():
     # ------------------------------
 
     def serialReceive(self):
-        global continueOp, objectDetected, beginParsing
+        global continueOp, objectDetected, beginParsing, objectDetected, whichBinPartition
         global metal_waste_level, battery_waste_level, electronic_waste_level, general_dry_waste_level, general_wet_waste_level
         global co_level, methane_level, air_quality_level, temperature, humidity
         global got_general_dry_waste, got_general_wet_waste, got_battery_waste, got_electronic_waste, got_metal_waste
@@ -178,49 +182,67 @@ class serialHandler():
         try:
             incomingSerial = self.arduinoPort.readline()
             dataToString = str(incomingSerial)
-            print(dataToString)
-            
-            if beginParsing:
+            #print(dataToString)
 
-                splitData = dataToString[2:-5].split(":")
+            splitData = dataToString[2:-5].split(":")
 
+            try:
                 if int(splitData[0]) == 0:
-                    self.objectDetected = False
+                    objectDetected = False
                 else:
-                    self.objectDetected = True
+                    objectDetected = True
+            except Exception as err:
+                print(err)
 
+            try:
                 if int(splitData[1]) == 0:
                     continueOp = False
                 else:
                     continueOp = True
+            except Exception as err:
+                print(err)
 
+            try:
                 if int(splitData[2]) == 0:
                     callCleaner = False
                 else:
                     callCleaner = True
+            except Exception as err:
+                print(err)
 
+            try:
                 levelSplitData = splitData[3].split("/")
-                #print(levelSplitData)
                 metal_waste_level = float(levelSplitData[0])
                 battery_waste_level = float(levelSplitData[1])
                 electronic_waste_level = float(levelSplitData[2])
                 general_dry_waste_level = float(levelSplitData[3])
                 general_wet_waste_level = float(levelSplitData[4])
+            except Exception as err:
+                print(err)
 
+            try:
                 gotWasteSplitData = splitData[4].split("/")
                 got_metal_waste = int(gotWasteSplitData[0])
                 got_battery_waste = int(gotWasteSplitData[1])
                 got_electronic_waste = int(gotWasteSplitData[2])
                 got_general_dry_waste = int(gotWasteSplitData[3])
                 got_general_wet_waste = int(gotWasteSplitData[4])
-
+            except Exception as err:
+                print(err)
+            
+            try:
                 currentWasteSplitData = splitData[5].split("/")
                 current_metal_waste = int(currentWasteSplitData[0])
                 current_battery_waste = int(currentWasteSplitData[1])
                 current_electronic_waste = int(currentWasteSplitData[2])
                 current_general_dry_waste = int(currentWasteSplitData[3])
                 current_general_wet_waste = int(currentWasteSplitData[4])
+            except Exception as err:
+                print(err)
 
+
+            try:
+            
                 sensorSplitData = splitData[6].split("/")
                 co_level = float(sensorSplitData[0])
                 methane_level = float(sensorSplitData[1])
@@ -228,52 +250,60 @@ class serialHandler():
                 temperature = float(sensorSplitData[3])
                 humidity = float(sensorSplitData[4])
 
+            except Exception as err:
+                print(err)
+
 
         except SerialException or OSError:
             self.disconnected = True
             self.reopenPort()
 
-        if dataToString[2:-5] == "!":
-            beginParsing = True
-
 
     def serialTransmit(self):
-        global autoTakeAPic, gotPic, detectedTrash
+        global autoTakeAPic, gotPic, objectDetected, detectedTrash, whichBinPartition
+        #self.whichBinPartition = 5
+        self.outsideCount += 1
+        print(f"outsideCount: {self.outsideCount}")
+        if (autoTakeAPic or objectDetected) and gotPic:
+            if len(detectedTrash) != 0:
+                #print(detectedTrash[0])
+                if detectedTrash[0] == "metal":
+                    whichBinPartition = 2
+                    
+                elif detectedTrash[0] == "battery":
+                    whichBinPartition = 1
 
-        if autoTakeAPic and gotPic:
-            if detectedTrash[0] == "Metal":
-                self.whichBinPartition = 1
+                elif detectedTrash[0] == "Electronic Devices":
+                    whichBinPartition = 5
 
-            elif detectedTrash[0] == "Battery":
-                self.whichBinPartition = 2
+                elif detectedTrash[0] == "General-Dry-Waste":
+                    whichBinPartition = 4
 
-            elif detectedTrash[0] == "Electronic Waste":
-                self.whichBinPartition = 3
-
-            elif detectedTrash[0] == "General Dry Waste":
-                self.whichBinPartition = 4
-
-            elif detectedTrash[0] == "General Wet Waste":
-                self.whichBinPartition = 5
-            
+                elif detectedTrash[0] == "General Wet Waste":
+                    whichBinPartition = 3
             else:
-                self.whichBinPartition = 0
+                print("No trash detected!")
+                whichBinPartition = 0
 
             try:
-                self.arduinoPort.write(f'{self.whichBinPartition} {continueOp}\r'.encode())
+                self.arduinoPort.write(f'{whichBinPartition} {overrideStop}\r'.encode())
                 self.disconnected = False
+                print(f"{whichBinPartition} {overrideStop}")
 
             except SerialException:
                 self.disconnected = True
                 self.reopenPort()
+
+            self.count += 1
+            print(f"insideCount: {self.count}")
 
     # -------------
     # TASK FUNCTION
     # -------------
 
     def mainFunction(self):
-        self.serialReceive()
         self.serialTransmit()
+        self.serialReceive()
 
 
 
@@ -299,7 +329,8 @@ class cameraHandler():
         self.image = None
         self.processedImage = None
         self.doneDetection = False
-                
+        self.takeOnce = False
+
         self.cap = cv2.VideoCapture(0)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
@@ -329,7 +360,7 @@ class cameraHandler():
 
     # class method to handle camera taking photos
     def capturePicture(self):
-        global gotPic, manualTakeAPic, autoTakeAPic
+        global gotPic, manualTakeAPic, autoTakeAPic, objectDetected
 
         self.result, self.image = self.cap.read()
 
@@ -352,7 +383,7 @@ class cameraHandler():
                 print("No manual image detected. Please try again")
 
         # if we received a request to take a picture
-        elif autoTakeAPic:
+        elif (autoTakeAPic or objectDetected) and whichBinPartition == 0:
 
             # if there is image data, save it as autoPicTaken.JPG in the current directory
             if self.doneDetection:
@@ -374,10 +405,10 @@ class cameraHandler():
 
     # since Raspberry Pi 5 is still not a good computer to do live detection, only image source will be used to do detection
     def detectTrashFromImage(self):
-        global autoTakeAPic, detectedTrash
+        global autoTakeAPic, objectDetected
         # detect the objects in the color images
-        if autoTakeAPic:
-            print("I got a picture!, processing it now")
+        if (autoTakeAPic or objectDetected) and whichBinPartition == 0:
+            #print("I got a picture!, processing it now")
             self.detectedTrash = []
             results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.20, max_det = 3)[0]
             names = self.model.names
@@ -408,12 +439,14 @@ class cameraHandler():
 
 
     def mainFunction(self):
-        global gotPic, autoTakeAPic
+        global gotPic, autoTakeAPic, objectDetected
         if continueOp:
             # if there is no trash for quite some time already, automatically take a photo every time the set period of  
             if self.currentMillis() - self.prevInterruptTime >= AUTOTAKE_PHOTO_DELAY:
                 print("Timeout triggered, taking a photo with detections...")
                 autoTakeAPic = True
+                self.prevInterruptTime = self.currentMillis()
+            elif objectDetected:
                 self.prevInterruptTime = self.currentMillis()
             self.capturePicture()
             self.detectTrashFromImage()
@@ -444,10 +477,7 @@ class GPIOHandler:
     def __init__(self):
         super().__init__()
         self.takeAPicture = False
-        self.chip = gpiod.Chip('gpiochip4') 
-        self.relayLine = self.chip.get_line(relayPin)
-        self.relayLine.request(consumer="LED", type=gpiod.LINE_REQ_DIR_OUT)
-    
+        self.relay = LED(17)
     # --------------------
     # TASK FUNCTION
     # --------------------
@@ -455,13 +485,11 @@ class GPIOHandler:
     # class method to control the LED strip
     def controlLEDStrip(self):
         global manualTakeAPic, autoTakeAPic
-        try:
-            if autoTakeAPic or manualTakeAPic:
-                self.relayLine.set_value(1) # turn on the LED
-            else:
-                self.relayLine.set_value(0) # turn off the LED
-        except Exception:
-            self.relayLine.release()
+
+        if autoTakeAPic or manualTakeAPic:
+            self.relay.on()
+        else:
+            self.relay.off()
 
     def mainFunction(self):
         if continueOp:
@@ -596,19 +624,38 @@ class MQTTClientHandler:
 
         elif topic == dustbin_state_topic:
             try:
-                rssi = float(self.getRSSI("wlo1"))
-            except TypeError:
+                rssi = float(self.getRSSI("wlan0"))
+            except:
                 print("No RSSI value obtained!")
-                rssi = None
+                rssi = 8888.0   # send an impossible value
+
+            try:
+                cpuUsage = self.getCPUUsage()
+            except:
+                print("No CPU Usage value obtained!")
+                cpuUsage = 8888.0   # send an impossible value
+
+            try:
+                ramUsage = self.getRAMUsage()
+            except:
+                print("No RAM Usage value obtained!")
+                ramUsage = 8888.0   # send an impossible value
+
+            try:
+                cpuTemp = self.getCPUTemp()
+            except:
+                print("No RAM Usage value obtained!")
+                cpuTemp = 8888.0    # send an impossible value
+
 
             jsonData = [
                 {
                     "dustbin_op": "Running" if continueOp else "Stopped",
                     "dustbin_op_code": 1 if continueOp else 0,
                     "dustbin_rssi": rssi,
-                    "dustbin_cpu_usage": self.getCPUUsage(),
-                    "dustbin_ram_usage": self.getRAMUsage(),
-                    "dustbin_cpu_temp": self.getCPUTemp()                    
+                    "dustbin_cpu_usage": cpuUsage,
+                    "dustbin_ram_usage": ramUsage,
+                    "dustbin_cpu_temp": cpuTemp                    
                 },
                 {
                     "dustbin_id": dustbin_ID,
@@ -639,10 +686,10 @@ class MQTTClientHandler:
             result = client.publish(topic, self.msgToPub)
             status = result[0]
 
-            if status == 0:
-                print(f"Send `{self.msgToPub}` to topic `{topic}`")
-            else:
-                print(f"Failed to send message to topic {topic}")
+            # if status == 0:
+            #     print(f"Send `{self.msgToPub}` to topic `{topic}`")
+            # else:
+            #     print(f"Failed to send message to topic {topic}")
         
         # reset the message
         self.msgToPub = None
@@ -668,7 +715,7 @@ class MQTTClientHandler:
         return percent_used
 
     def getCPUTemp(self):
-        return psutil.sensors_temperatures()['coretemp'][0].current
+        return psutil.sensors_temperatures()['cpu_thermal'][0].current
 
     # Get the signal strength of the connection
     def getRSSI(self, interface):
@@ -694,7 +741,7 @@ class MQTTClientHandler:
     def imgToBase64(self):
         global gotPic, autoTakeAPic, manualTakeAPic
         # Open the image file
-        print("converting the image now")
+        #print("converting the image now")
         if gotPic:
             if autoTakeAPic:
                 with open("autoPicTaken.jpg", "rb") as f:
@@ -709,7 +756,7 @@ class MQTTClientHandler:
                     resized_image = image.resize(new_size)
                     resized_image.save(buffer, format="JPEG")
                     encoded_image = base64.b64encode(buffer.getvalue())
-                    print(str(encoded_image)[2:-1])
+                    #print(str(encoded_image)[2:-1])
                     return encoded_image
     
             elif manualTakeAPic:
@@ -723,7 +770,7 @@ class MQTTClientHandler:
                     resized_image = image.resize(new_size)
                     resized_image.save(buffer, format="JPEG")
                     encoded_image = base64.b64encode(buffer.getvalue())
-                    print(str(encoded_image)[2:-1])
+                    #print(str(encoded_image)[2:-1])
                     return encoded_image
 
     def currentMillis(self):
@@ -761,12 +808,12 @@ def main(args = None):
     client = client_class.connectMQTT()
 
     camera_handler = cameraHandler()
-    #gpio_handler = GPIOHandler()
+    gpio_handler = GPIOHandler()
     serial_handler = serialHandler()
 
     while True:
         camera_handler.mainFunction()
-        #gpio_handler.mainFunction()
+        gpio_handler.mainFunction()
         serial_handler.mainFunction()
         client.loop_start()    
         client_class.mainFunction(client)
