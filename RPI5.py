@@ -19,7 +19,7 @@ import subprocess
 import psutil
 import serial
 from serial import SerialException
-from gpiozero import LED
+#from gpiozero import LED
 from paho.mqtt import client as mqtt_client
 from PIL import Image
 from io import BytesIO
@@ -61,6 +61,7 @@ FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 #cam_id = "usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
 AUTOTAKE_PHOTO_DELAY = 10000    # 1 minute delay
+WAIT_CHECK_DELAY = 5000
 #create a rectangle at left side of screen
 ZONE_POLYGON = np.array([
     [0.1,0.7],
@@ -263,11 +264,11 @@ class serialHandler():
         global autoTakeAPic, gotPic, objectDetected, detectedTrash, whichBinPartition
         #self.whichBinPartition = 5
         self.outsideCount += 1
-        print(f"outsideCount: {self.outsideCount}")
+        #print(f"outsideCount: {self.outsideCount}")
         if (autoTakeAPic or objectDetected) and gotPic:
             if len(detectedTrash) != 0:
-                #print(detectedTrash[0])
-                if detectedTrash[0] == "metal":
+                print(detectedTrash[0])
+                if detectedTrash[0] == "Metal":
                     whichBinPartition = 2
                     
                 elif detectedTrash[0] == "battery":
@@ -297,6 +298,9 @@ class serialHandler():
             self.count += 1
             print(f"insideCount: {self.count}")
 
+        elif objectDetected == 0:
+            whichBinPartition = 0
+
     # -------------
     # TASK FUNCTION
     # -------------
@@ -324,6 +328,7 @@ class cameraHandler():
         
         self.prevDetectTime = 0
         self.prevInterruptTime = self.currentMillis()
+        self.prevWaitCheckTime = self.currentMillis()
 
         self.result = None
         self.image = None
@@ -384,7 +389,7 @@ class cameraHandler():
 
         # if we received a request to take a picture
         elif (autoTakeAPic or objectDetected) and whichBinPartition == 0:
-
+            print("taking photo of the trash...")
             # if there is image data, save it as autoPicTaken.JPG in the current directory
             if self.doneDetection:
                 myFile = Path(f"autoPicTaken.jpg")
@@ -405,38 +410,43 @@ class cameraHandler():
 
     # since Raspberry Pi 5 is still not a good computer to do live detection, only image source will be used to do detection
     def detectTrashFromImage(self):
-        global autoTakeAPic, objectDetected
+        global autoTakeAPic, objectDetected, detectedTrash
         # detect the objects in the color images
-        if (autoTakeAPic or objectDetected) and whichBinPartition == 0:
-            #print("I got a picture!, processing it now")
-            self.detectedTrash = []
-            results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.20, max_det = 3)[0]
-            names = self.model.names
-            detections = sv.Detections.from_ultralytics(results)
-            detections = self.tracker.update_with_detections(detections)
+        if (autoTakeAPic or objectDetected) and whichBinPartition == 0 and self.result:
+            if (self.currentMillis() - self.prevWaitCheckTime >= WAIT_CHECK_DELAY):
+                print("detecting the trash...")
+                #print("I got a picture!, processing it now")
+                detectedTrash = []
+                results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.70, max_det = 3)[0]
+                names = self.model.names
+                detections = sv.Detections.from_ultralytics(results)
+                detections = self.tracker.update_with_detections(detections)
 
-            # display the details of the detections at the top of each object's bounding boxes
-            labels = [
-                f"{self.model.model.names[class_id]} {confidence:0.2f} {results.boxes.xyxy[0][0]}"
-                for _, _, confidence, class_id, _
-                in detections
-            ]
-            
-            # obtain the results of the detections
-            for r in results:
-                for c in r.boxes.cls:
-                    detectedTrash.append(names[int(c)]) # append the trash detected into the array
-            
-            #Draw the box on screen
-            self.processedImage = self.box_annotator.annotate(scene=self.image, detections=detections)
+                # display the details of the detections at the top of each object's bounding boxes
+                labels = [
+                    f"{self.model.model.names[class_id]} {confidence:0.2f} {results.boxes.xyxy[0][0]}"
+                    for _, _, confidence, class_id, _
+                    in detections
+                ]
+                
+                # obtain the results of the detections
+                for r in results:
+                    for c in r.boxes.cls:
+                        detectedTrash.append(names[int(c)]) # append the trash detected into the array
+                
+                #Draw the box on screen
+                self.processedImage = self.box_annotator.annotate(scene=self.image, detections=detections)
 
-            #Draw the labels on screen
-            self.processedImage = self.label_annotator.annotate(
-                scene=self.processedImage, detections=detections, labels=labels)
+                #Draw the labels on screen
+                self.processedImage = self.label_annotator.annotate(
+                    scene=self.processedImage, detections=detections, labels=labels)
 
-            self.doneDetection = True
-            self.prevInterruptTime = self.currentMillis()   # reset the previous interrupt time
+                self.doneDetection = True
+                self.prevInterruptTime = self.currentMillis()   # reset the previous interrupt time
+                self.prevWaitCheckTime = self.currentMillis()
 
+        else:
+            self.prevWaitCheckTime = self.currentMillis()
 
     def mainFunction(self):
         global gotPic, autoTakeAPic, objectDetected
@@ -472,28 +482,28 @@ class cameraHandler():
 # -------------------------
 # -------------------------
 
-class GPIOHandler:
-    # initialize the class and the GPIO
-    def __init__(self):
-        super().__init__()
-        self.takeAPicture = False
-        self.relay = LED(17)
-    # --------------------
-    # TASK FUNCTION
-    # --------------------
+# class GPIOHandler:
+#     # initialize the class and the GPIO
+#     def __init__(self):
+#         super().__init__()
+#         self.takeAPicture = False
+#         self.relay = LED(17)
+#     # --------------------
+#     # TASK FUNCTION
+#     # --------------------
 
-    # class method to control the LED strip
-    def controlLEDStrip(self):
-        global manualTakeAPic, autoTakeAPic
+#     # class method to control the LED strip
+#     def controlLEDStrip(self):
+#         global manualTakeAPic, autoTakeAPic
 
-        if autoTakeAPic or manualTakeAPic:
-            self.relay.on()
-        else:
-            self.relay.off()
+#         if autoTakeAPic or manualTakeAPic:
+#             self.relay.on()
+#         else:
+#             self.relay.off()
 
-    def mainFunction(self):
-        if continueOp:
-            self.controlLEDStrip()
+#     def mainFunction(self):
+#         if continueOp:
+#             self.controlLEDStrip()
 
 
 # -------------------------
@@ -739,11 +749,11 @@ class MQTTClientHandler:
 
     # class method to handle conversion of RGB frame to base64 format
     def imgToBase64(self):
-        global gotPic, autoTakeAPic, manualTakeAPic
+        global gotPic, autoTakeAPic, manualTakeAPic, objectDetected
         # Open the image file
         #print("converting the image now")
         if gotPic:
-            if autoTakeAPic:
+            if autoTakeAPic or objectDetected:
                 with open("autoPicTaken.jpg", "rb") as f:
                     buffer = BytesIO()
                     image = Image.open(f)
@@ -808,12 +818,12 @@ def main(args = None):
     client = client_class.connectMQTT()
 
     camera_handler = cameraHandler()
-    gpio_handler = GPIOHandler()
+    #gpio_handler = GPIOHandler()
     serial_handler = serialHandler()
 
     while True:
         camera_handler.mainFunction()
-        gpio_handler.mainFunction()
+        #gpio_handler.mainFunction()
         serial_handler.mainFunction()
         client.loop_start()    
         client_class.mainFunction(client)
