@@ -19,7 +19,7 @@ import subprocess
 import psutil
 import serial
 from serial import SerialException
-#from gpiozero import LED
+from gpiozero import LED
 from paho.mqtt import client as mqtt_client
 from PIL import Image
 from io import BytesIO
@@ -417,7 +417,7 @@ class cameraHandler():
                 print("detecting the trash...")
                 #print("I got a picture!, processing it now")
                 detectedTrash = []
-                results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.70, max_det = 3)[0]
+                results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.60, max_det = 3)[0]
                 names = self.model.names
                 detections = sv.Detections.from_ultralytics(results)
                 detections = self.tracker.update_with_detections(detections)
@@ -482,28 +482,28 @@ class cameraHandler():
 # -------------------------
 # -------------------------
 
-# class GPIOHandler:
-#     # initialize the class and the GPIO
-#     def __init__(self):
-#         super().__init__()
-#         self.takeAPicture = False
-#         self.relay = LED(17)
-#     # --------------------
-#     # TASK FUNCTION
-#     # --------------------
+class GPIOHandler:
+    # initialize the class and the GPIO
+    def __init__(self):
+        super().__init__()
+        self.takeAPicture = False
+        self.relay = LED(17)
+    # --------------------
+    # TASK FUNCTION
+    # --------------------
 
-#     # class method to control the LED strip
-#     def controlLEDStrip(self):
-#         global manualTakeAPic, autoTakeAPic
+    # class method to control the LED strip
+    def controlLEDStrip(self):
+        global manualTakeAPic, autoTakeAPic, objectDetected
 
-#         if autoTakeAPic or manualTakeAPic:
-#             self.relay.on()
-#         else:
-#             self.relay.off()
+        if autoTakeAPic or manualTakeAPic or objectDetected:
+            self.relay.on()
+        else:
+            self.relay.off()
 
-#     def mainFunction(self):
-#         if continueOp:
-#             self.controlLEDStrip()
+    def mainFunction(self):
+        if continueOp:
+            self.controlLEDStrip()
 
 
 # -------------------------
@@ -818,12 +818,12 @@ def main(args = None):
     client = client_class.connectMQTT()
 
     camera_handler = cameraHandler()
-    #gpio_handler = GPIOHandler()
+    gpio_handler = GPIOHandler()
     serial_handler = serialHandler()
 
     while True:
         camera_handler.mainFunction()
-        #gpio_handler.mainFunction()
+        gpio_handler.mainFunction()
         serial_handler.mainFunction()
         client.loop_start()    
         client_class.mainFunction(client)
