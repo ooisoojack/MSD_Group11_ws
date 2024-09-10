@@ -16,10 +16,11 @@
 import os
 import json
 import subprocess
+import requests
 import psutil
 import serial
 from serial import SerialException
-from gpiozero import LED
+#from gpiozero import LED
 from paho.mqtt import client as mqtt_client
 from PIL import Image
 from io import BytesIO
@@ -55,6 +56,12 @@ client_id = f'python-mqtt-{random.randint(0, 1000)}'
 
 # serial comms parameters
 serial_id = "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
+
+
+# Telegram parameters
+BOT_TOKEN = "7299492934:AAGoFfGdU0dZTac3eVQP5byGTK6_98EAhsQ"
+chat_id = "-1002259258276"
+
 
 # camera parameters
 FRAME_WIDTH = 640
@@ -471,6 +478,37 @@ class cameraHandler():
 # -------------------------
 # -------------------------
 
+class telegramHandler:
+    # initialize the class and the GPIO
+    def __init__(self):
+        super().__init__()
+        self.sendTelegramOnce = False
+        self.msg = ""
+        self.url = ""
+
+    def msgCheck(self):
+        if callCleaner and not self.sendTelegramOnce:
+            self.sendTelegramOnce = True
+            if current_battery_waste >= 5 and current_general_wet_waste >= 20:
+                self.msg = f"Battery waste and general wet waste quantities exceeded safe limits! Please clean bin {dustbin_ID}"            
+            elif current_battery_waste >= 5:
+                self.msg = f"Battery waste quantity exceed safe limit! Please clean bin {dustbin_ID}"
+            elif current_general_wet_waste >= 20:
+                self.msg = f"General wet waste quantity exceed safe limit! Please clean bin {dustbin_ID}"
+            else:
+                self.msg = f"Unknown error, please service bin {dustbin_ID}"
+
+            self.url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage?chat_id={chat_id}&text={self.msg}"
+            r = requests.get(self.url)
+            print(r.json())
+
+        elif not callCleaner:
+            self.sendTelegramOnce = False
+
+    def mainFunction(self):
+        if continueOp:
+            self.msgCheck()
+
 
 
 
@@ -817,14 +855,16 @@ def main(args = None):
     client_class = MQTTClientHandler()
     client = client_class.connectMQTT()
 
-    camera_handler = cameraHandler()
-    gpio_handler = GPIOHandler()
-    serial_handler = serialHandler()
+    # camera_handler = cameraHandler()
+    # gpio_handler = GPIOHandler()
+    # serial_handler = serialHandler()
+    telegram_handler = telegramHandler()
 
     while True:
-        camera_handler.mainFunction()
-        gpio_handler.mainFunction()
-        serial_handler.mainFunction()
+        # camera_handler.mainFunction()
+        # gpio_handler.mainFunction()
+        # serial_handler.mainFunction()
+        telegram_handler.mainFunction()
         client.loop_start()    
         client_class.mainFunction(client)
         client.loop_stop() 
