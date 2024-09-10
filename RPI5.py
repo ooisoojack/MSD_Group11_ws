@@ -855,15 +855,15 @@ def main(args = None):
     client_class = MQTTClientHandler()
     client = client_class.connectMQTT()
 
-    # camera_handler = cameraHandler()
-    # gpio_handler = GPIOHandler()
-    # serial_handler = serialHandler()
+    camera_handler = cameraHandler()
+    gpio_handler = GPIOHandler()
+    serial_handler = serialHandler()
     telegram_handler = telegramHandler()
 
     while True:
-        # camera_handler.mainFunction()
-        # gpio_handler.mainFunction()
-        # serial_handler.mainFunction()
+        camera_handler.mainFunction()
+        gpio_handler.mainFunction()
+        serial_handler.mainFunction()
         telegram_handler.mainFunction()
         client.loop_start()    
         client_class.mainFunction(client)
