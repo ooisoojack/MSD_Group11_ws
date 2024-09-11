@@ -20,7 +20,7 @@ import requests
 import psutil
 import serial
 from serial import SerialException
-#from gpiozero import LED
+from gpiozero import LED
 from paho.mqtt import client as mqtt_client
 from PIL import Image
 from io import BytesIO
@@ -115,6 +115,8 @@ methane_level = 0
 air_quality_level = 0
 temperature = 0
 humidity = 0
+dustbin_weight = 0
+
 
 # logics
 gotPic = False
@@ -181,9 +183,9 @@ class serialHandler():
     # ------------------------------
 
     def serialReceive(self):
-        global continueOp, objectDetected, beginParsing, objectDetected, whichBinPartition
+        global continueOp, objectDetected, beginParsing, objectDetected, whichBinPartition, callCleaner
         global metal_waste_level, battery_waste_level, electronic_waste_level, general_dry_waste_level, general_wet_waste_level
-        global co_level, methane_level, air_quality_level, temperature, humidity
+        global co_level, methane_level, air_quality_level, temperature, humidity, dustbin_weight
         global got_general_dry_waste, got_general_wet_waste, got_battery_waste, got_electronic_waste, got_metal_waste
         global current_battery_waste, current_electronic_waste, current_general_dry_waste, current_general_wet_waste, current_metal_waste
 
@@ -257,6 +259,7 @@ class serialHandler():
                 air_quality_level = float(sensorSplitData[2])
                 temperature = float(sensorSplitData[3])
                 humidity = float(sensorSplitData[4])
+                dustbin_weight = float(sensorSplitData[5])
 
             except Exception as err:
                 print(err)
@@ -347,7 +350,7 @@ class cameraHandler():
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
-        self.model = YOLO("v17.pt")
+        self.model = YOLO("v18.pt")
 
         #Supervision Tracking function
         self.tracker = sv.ByteTrack()
@@ -396,7 +399,7 @@ class cameraHandler():
 
         # if we received a request to take a picture
         elif (autoTakeAPic or objectDetected) and whichBinPartition == 0:
-            print("taking photo of the trash...")
+            #print("taking photo of the trash...")
             # if there is image data, save it as autoPicTaken.JPG in the current directory
             if self.doneDetection:
                 myFile = Path(f"autoPicTaken.jpg")
@@ -412,7 +415,7 @@ class cameraHandler():
             # otherwise, print an error message
             else:
                 gotPic = False
-                print("No auto image detected. Please try again")
+                #print("No auto image detected. Please try again")
 
 
     # since Raspberry Pi 5 is still not a good computer to do live detection, only image source will be used to do detection
@@ -719,7 +722,8 @@ class MQTTClientHandler:
                     "dustbin_methane_lvl": methane_level,
                     "dustbin_air_quality_lvl": air_quality_level,
                     "dustbin_temperature": temperature,
-                    "dustbin_humidity": humidity                    
+                    "dustbin_humidity": humidity,
+                    "dustbin_weight": dustbin_weight                 
                 },
                 {
                     "dustbin_id": dustbin_ID,
