@@ -50,6 +50,7 @@ MAX_RECONNECT_COUNT = 12
 MAX_RECONNECT_DELAY = 60
 # broker = "0.tcp.ap.ngrok.io"  # For different network application
 # port = 18518
+#broker = "192.168.123.149"    # For local network application
 broker = "localhost"    # For local network application
 port = 1883
 client_id = f'python-mqtt-{random.randint(0, 1000)}'
@@ -67,8 +68,11 @@ chat_id = "-1002259258276"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 #cam_id = "usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
-AUTOTAKE_PHOTO_DELAY = 10000    # 1 minute delay
+AUTOTAKE_PHOTO_DELAY = 60000    # 1 minute delay
 WAIT_CHECK_DELAY = 5000
+MANUAL_PHOTO_DELAY = 5000
+
+
 #create a rectangle at left side of screen
 ZONE_POLYGON = np.array([
     [0.1,0.7],
@@ -192,7 +196,7 @@ class serialHandler():
         try:
             incomingSerial = self.arduinoPort.readline()
             dataToString = str(incomingSerial)
-            #print(dataToString)
+            print(dataToString)
 
             splitData = dataToString[2:-5].split(":")
 
@@ -350,7 +354,7 @@ class cameraHandler():
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
-        self.model = YOLO("v18.pt")
+        self.model = YOLO("v19.pt")
 
         #Supervision Tracking function
         self.tracker = sv.ByteTrack()
@@ -421,13 +425,14 @@ class cameraHandler():
     # since Raspberry Pi 5 is still not a good computer to do live detection, only image source will be used to do detection
     def detectTrashFromImage(self):
         global autoTakeAPic, objectDetected, detectedTrash
+
         # detect the objects in the color images
         if (autoTakeAPic or objectDetected) and whichBinPartition == 0 and self.result:
             if (self.currentMillis() - self.prevWaitCheckTime >= WAIT_CHECK_DELAY):
                 print("detecting the trash...")
                 #print("I got a picture!, processing it now")
                 detectedTrash = []
-                results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.60, max_det = 3)[0]
+                results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.70, max_det = 3)[0]
                 names = self.model.names
                 detections = sv.Detections.from_ultralytics(results)
                 detections = self.tracker.update_with_detections(detections)
@@ -560,11 +565,12 @@ class MQTTClientHandler:
     # initialize the class and the camera
     def __init__(self):
         super().__init__()
-
+        self.prevManualPhotoMillis = self.currentMillis()
         self.doneConversion = False
         self.msgToPub = None
         self.prevSendMillis = self.currentMillis()
-
+        self.waitForData = False
+        self.sendDetectedOnce = False
     # ------------------------------------
     # MQTT CONNECTION HANDLING FUNCTIONS
     # ------------------------------------
@@ -575,6 +581,8 @@ class MQTTClientHandler:
             print("Connected to Mosquitto MQTT Broker")
         else:
             print("Failed to connect to Mosquitto MQTT broker, return code %d\n", rc)
+
+        print(f"rc: {rc}")
 
     # handles disconnection from Mosquitto MQTT
     def onDisconnect(self, client, userdata, rc):
@@ -601,7 +609,9 @@ class MQTTClientHandler:
         client = mqtt_client.Client(mqtt_client.CallbackAPIVersion.VERSION2, client_id)
         client.on_connect = self.onConnect
         client.on_disconnect = self.onDisconnect
-        client.connect(broker, port)
+        #client.tls_set()
+        client.username_pw_set(username="Group_11", password="guoenjustinsoojack")
+        client.connect(broker, port, 60)
         return client
     
 
@@ -614,10 +624,12 @@ class MQTTClientHandler:
         global autoTakeAPic, manualTakeAPic, continueOp
         print(f"Received `{msg.payload.decode()}` from `{msg.topic}` topic")
 
+
         # if we received a request to take a photo
         if msg.topic == '/group_11/take_picture':
             print("Calling Camera Handler to take photo...")
             manualTakeAPic = msg.payload.decode()
+
 
         elif msg.topic == '/group_11/disable_all':
             if msg.payload.decode() == "true":
@@ -655,16 +667,17 @@ class MQTTClientHandler:
                     "dustbin_electronic_waste": got_electronic_waste,
                     "dustbin_general_dry_waste": got_general_dry_waste,
                     "dustbin_general_wet_waste": got_general_wet_waste,
+                    "waste_detected": detectedTrash[0],
                     "current_metal_waste": current_metal_waste,
                     "current_battery_waste": current_battery_waste,
                     "current_electronic_waste": current_electronic_waste,
                     "current_general_dry_waste": current_general_dry_waste,
                     "current_general_wet_waste": current_general_wet_waste,
-                    "level_metal_waste": metal_waste_level,
-                    "level_battery_waste": battery_waste_level,
-                    "level_electronic_waste": electronic_waste_level,
-                    "level_general_dry_waste": general_dry_waste_level,
-                    "level_general_wet_waste": general_wet_waste_level                      
+                    "level_metal_waste": "Full" if metal_waste_level == 1 else "Not full",
+                    "level_battery_waste": "Full" if battery_waste_level == 1 else "Not full",
+                    "level_electronic_waste": "Full" if electronic_waste_level == 1 else "Not full",
+                    "level_general_dry_waste": "Full" if general_dry_waste_level == 1 else "Not full",
+                    "level_general_wet_waste": "Full" if general_wet_waste_level == 1 else "Not full",                    
                 },
                 {
                     "dustbin_id": dustbin_ID
@@ -738,10 +751,10 @@ class MQTTClientHandler:
             result = client.publish(topic, self.msgToPub)
             status = result[0]
 
-            # if status == 0:
-            #     print(f"Send `{self.msgToPub}` to topic `{topic}`")
-            # else:
-            #     print(f"Failed to send message to topic {topic}")
+            if status == 0:
+                print(f"Send `{self.msgToPub}` to topic `{topic}`")
+            else:
+                print(f"Failed to send message to topic {topic}")
         
         # reset the message
         self.msgToPub = None
@@ -836,21 +849,51 @@ class MQTTClientHandler:
         self.subscribeMQTT(take_pic_topic, client)
         self.subscribeMQTT(disable_all_topic, client)
 
-        if self.currentMillis() - self.prevSendMillis >= AUTOTAKE_PHOTO_DELAY:
-            self.prevSendMillis = self.currentMillis()
-            self.publishMQTT(dustbin_state_topic, client)
-        
-        if continueOp:
-            self.publishMQTT(img_topic, client)
-
+        if objectDetected and not self.sendDetectedOnce:
+            if not self.waitForData:
+                self.publishMQTT(img_topic, client)
+                self.waitForData = True
+                
+            if self.doneConversion:
+                if got_metal_waste + got_battery_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste != 0:
+                    self.publishMQTT(waste_topic, client)
+                    self.publishMQTT(sensor_topic, client)
+                    self.publishMQTT(dustbin_state_topic, client)
+                    
+                    self.sendDetectedOnce = True
+                    gotPic = False
+                    self.doneConversion = False
+                    self.waitForData = False                
+                
+        elif autoTakeAPic:
+            if not self.waitForData:
+                self.publishMQTT(img_topic, client)
+                self.waitForData = True
+                
             if self.doneConversion:
                 self.publishMQTT(waste_topic, client)
                 self.publishMQTT(sensor_topic, client)
-
-                manualTakeAPic = False
+                self.publishMQTT(dustbin_state_topic, client)
                 autoTakeAPic = False
                 gotPic = False
                 self.doneConversion = False
+
+        elif manualTakeAPic:
+            self.publishMQTT(img_topic, client)
+            self.publishMQTT(waste_topic, client)
+            self.publishMQTT(sensor_topic, client)
+            self.publishMQTT(dustbin_state_topic, client)
+            
+            if self.currentMillis() - self.prevManualPhotoMillis >= MANUAL_PHOTO_DELAY:
+                manualTakeAPic = False
+                gotPic = False
+                self.doneConversion = False                
+                self.prevManualPhotoMillis = self.currentMillis()
+
+        else:
+            self.sendDetectedOnce = False
+            self.prevManualPhotoMillis = self.currentMillis()
+
 
 # --------------
 # MAIN FUNCTION
