@@ -68,7 +68,7 @@ chat_id = "-1002259258276"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 #cam_id = "usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
-AUTOTAKE_PHOTO_DELAY = 60000    # 1 minute delay
+AUTOTAKE_PHOTO_DELAY = 10000    # 1 minute delay
 WAIT_CHECK_DELAY = 5000
 MANUAL_PHOTO_DELAY = 5000
 
@@ -123,7 +123,8 @@ dustbin_weight = 0
 
 
 # logics
-gotPic = False
+gotPicAuto = False
+gotPicManual = False
 autoTakeAPic = False
 manualTakeAPic = False
 continueOp = True
@@ -275,11 +276,11 @@ class serialHandler():
 
 
     def serialTransmit(self):
-        global autoTakeAPic, gotPic, objectDetected, detectedTrash, whichBinPartition
+        global autoTakeAPic, gotPicAuto, gotPicManual, objectDetected, detectedTrash, whichBinPartition
         #self.whichBinPartition = 5
         self.outsideCount += 1
         #print(f"outsideCount: {self.outsideCount}")
-        if (autoTakeAPic or objectDetected) and gotPic:
+        if (autoTakeAPic or objectDetected) and gotPicAuto:
             if len(detectedTrash) != 0:
                 print(detectedTrash[0])
                 if detectedTrash[0] == "Metal":
@@ -379,7 +380,7 @@ class cameraHandler():
 
     # class method to handle camera taking photos
     def capturePicture(self):
-        global gotPic, manualTakeAPic, autoTakeAPic, objectDetected
+        global gotPicManual, gotPicAuto, manualTakeAPic, autoTakeAPic, objectDetected
 
         self.result, self.image = self.cap.read()
 
@@ -394,15 +395,15 @@ class cameraHandler():
                     except:
                         pass
                 cv2.imwrite(f"manualPicTaken.jpg", self.image)
-                gotPic = True
+                gotPicManual = True
 
             # otherwise, print an error message
             else:
-                gotPic = False
+                gotPicManual = False
                 print("No manual image detected. Please try again")
 
         # if we received a request to take a picture
-        elif (autoTakeAPic or objectDetected) and whichBinPartition == 0:
+        elif (autoTakeAPic or objectDetected):
             #print("taking photo of the trash...")
             # if there is image data, save it as autoPicTaken.JPG in the current directory
             if self.doneDetection:
@@ -413,12 +414,12 @@ class cameraHandler():
                     except:
                         pass
                 cv2.imwrite(f"autoPicTaken.jpg", self.processedImage)
-                gotPic = True
+                gotPicAuto = True
                 self.doneDetection = False
 
             # otherwise, print an error message
             else:
-                gotPic = False
+                gotPicAuto = False
                 #print("No auto image detected. Please try again")
 
 
@@ -464,7 +465,7 @@ class cameraHandler():
             self.prevWaitCheckTime = self.currentMillis()
 
     def mainFunction(self):
-        global gotPic, autoTakeAPic, objectDetected
+        global autoTakeAPic, objectDetected
         if continueOp:
             # if there is no trash for quite some time already, automatically take a photo every time the set period of  
             if self.currentMillis() - self.prevInterruptTime >= AUTOTAKE_PHOTO_DELAY:
@@ -641,11 +642,12 @@ class MQTTClientHandler:
 
     # class method to handle message publishing task
     def publishMQTT(self, topic, client):
-        global autoTakeAPic, manualTakeAPic, gotPic
+        global autoTakeAPic, manualTakeAPic, gotPicManual, gotPicAuto
 
         # if we received a request to take a picture, receive the base64 code of the picture
-        if topic == img_topic and gotPic:
+        if topic == img_topic and (gotPicManual or gotPicAuto):
             image = str(self.imgToBase64())
+            print("converting the image...")
             jsonData = [
                 {
                     "image": image[2:-1]
@@ -667,7 +669,7 @@ class MQTTClientHandler:
                     "dustbin_electronic_waste": got_electronic_waste,
                     "dustbin_general_dry_waste": got_general_dry_waste,
                     "dustbin_general_wet_waste": got_general_wet_waste,
-                    "waste_detected": detectedTrash[0],
+                    "waste_detected": detectedTrash[0] if len(detectedTrash) != 0 else "None",
                     "current_metal_waste": current_metal_waste,
                     "current_battery_waste": current_battery_waste,
                     "current_electronic_waste": current_electronic_waste,
@@ -804,39 +806,38 @@ class MQTTClientHandler:
 
     # class method to handle conversion of RGB frame to base64 format
     def imgToBase64(self):
-        global gotPic, autoTakeAPic, manualTakeAPic, objectDetected
+        global gotPicAuto, autoTakeAPic, manualTakeAPic, objectDetected
         # Open the image file
         #print("converting the image now")
-        if gotPic:
-            if autoTakeAPic or objectDetected:
-                with open("autoPicTaken.jpg", "rb") as f:
-                    buffer = BytesIO()
-                    image = Image.open(f)
+        if (autoTakeAPic or objectDetected) and gotPicAuto:
+            with open("autoPicTaken.jpg", "rb") as f:
+                buffer = BytesIO()
+                image = Image.open(f)
 
-                    # resize the image so that the base64 code is not too long
-                    # however this will result in blurry image
-                    # hence the scaling is removed
-                    width, height = image.size
-                    new_size = (width, height)
-                    resized_image = image.resize(new_size)
-                    resized_image.save(buffer, format="JPEG")
-                    encoded_image = base64.b64encode(buffer.getvalue())
-                    #print(str(encoded_image)[2:-1])
-                    return encoded_image
-    
-            elif manualTakeAPic:
-                with open("manualPicTaken.jpg", "rb") as f:
-                    buffer = BytesIO()
-                    image = Image.open(f)
+                # resize the image so that the base64 code is not too long
+                # however this will result in blurry image
+                # hence the scaling is removed
+                width, height = image.size
+                new_size = (width, height)
+                resized_image = image.resize(new_size)
+                resized_image.save(buffer, format="JPEG")
+                encoded_image = base64.b64encode(buffer.getvalue())
+                #print(str(encoded_image)[2:-1])
+                return encoded_image
 
-                    # resize the image so that the base64 code is not too long
-                    width, height = image.size
-                    new_size = (width, height)
-                    resized_image = image.resize(new_size)
-                    resized_image.save(buffer, format="JPEG")
-                    encoded_image = base64.b64encode(buffer.getvalue())
-                    #print(str(encoded_image)[2:-1])
-                    return encoded_image
+        elif manualTakeAPic and gotPicManual:
+            with open("manualPicTaken.jpg", "rb") as f:
+                buffer = BytesIO()
+                image = Image.open(f)
+
+                # resize the image so that the base64 code is not too long
+                width, height = image.size
+                new_size = (width, height)
+                resized_image = image.resize(new_size)
+                resized_image.save(buffer, format="JPEG")
+                encoded_image = base64.b64encode(buffer.getvalue())
+                #print(str(encoded_image)[2:-1])
+                return encoded_image
 
     def currentMillis(self):
         return round(time.time() * 1000)
@@ -844,39 +845,48 @@ class MQTTClientHandler:
 
     # MAIN class method to execute all MQTT tasks
     def mainFunction(self, client):
-        global autoTakeAPic, manualTakeAPic, gotPic
+        global autoTakeAPic, manualTakeAPic, gotPicAuto, gotPicManual
         
         self.subscribeMQTT(take_pic_topic, client)
         self.subscribeMQTT(disable_all_topic, client)
 
         if objectDetected and not self.sendDetectedOnce:
-            if not self.waitForData:
+            print(got_battery_waste + got_metal_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste)
+            if not self.waitForData and gotPicAuto:
                 self.publishMQTT(img_topic, client)
                 self.waitForData = True
-                
-            if self.doneConversion:
-                if got_metal_waste + got_battery_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste != 0:
+
+            if got_battery_waste + got_metal_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste != 0 :
+
+                print(self.waitForData)
+                print(self.doneConversion)
+                print(gotPicAuto)
+                print(self.sendDetectedOnce)
+
+                if self.doneConversion:
                     self.publishMQTT(waste_topic, client)
                     self.publishMQTT(sensor_topic, client)
                     self.publishMQTT(dustbin_state_topic, client)
                     
                     self.sendDetectedOnce = True
-                    gotPic = False
-                    self.doneConversion = False
+                    gotPicAuto = False
+                    #self.doneConversion = False
                     self.waitForData = False                
-                
+                    
+
         elif autoTakeAPic:
-            if not self.waitForData:
+            if not self.waitForData and gotPicAuto:
                 self.publishMQTT(img_topic, client)
                 self.waitForData = True
-                
+
             if self.doneConversion:
                 self.publishMQTT(waste_topic, client)
                 self.publishMQTT(sensor_topic, client)
                 self.publishMQTT(dustbin_state_topic, client)
                 autoTakeAPic = False
-                gotPic = False
-                self.doneConversion = False
+                self.waitForData = False
+                gotPicAuto = False
+                #self.doneConversion = False
 
         elif manualTakeAPic:
             self.publishMQTT(img_topic, client)
@@ -886,12 +896,15 @@ class MQTTClientHandler:
             
             if self.currentMillis() - self.prevManualPhotoMillis >= MANUAL_PHOTO_DELAY:
                 manualTakeAPic = False
-                gotPic = False
-                self.doneConversion = False                
+                gotPicManual = False
+                #self.doneConversion = False                
                 self.prevManualPhotoMillis = self.currentMillis()
 
         else:
-            self.sendDetectedOnce = False
+            if not objectDetected:
+                self.sendDetectedOnce = False
+            self.waitForData = False
+            self.doneConversion = False
             self.prevManualPhotoMillis = self.currentMillis()
 
 
