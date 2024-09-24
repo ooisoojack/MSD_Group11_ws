@@ -50,8 +50,9 @@ MAX_RECONNECT_COUNT = 12
 MAX_RECONNECT_DELAY = 60
 # broker = "0.tcp.ap.ngrok.io"  # For different network application
 # port = 18518
-#broker = "192.168.123.149"    # For local network application
-broker = "localhost"    # For local network application
+broker = "192.168.43.32"    # For local network application
+#broker = "osj-ROG-Strix-G531GT-G531GT"    # For local network application
+# broker = "localhost"    # For local network application
 port = 1883
 client_id = f'python-mqtt-{random.randint(0, 1000)}'
 
@@ -68,9 +69,10 @@ chat_id = "-1002259258276"
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 #cam_id = "usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index"
-AUTOTAKE_PHOTO_DELAY = 10000    # 1 minute delay
+AUTOTAKE_PHOTO_DELAY = 60000    # 1 minute delay
 WAIT_CHECK_DELAY = 5000
 MANUAL_PHOTO_DELAY = 5000
+WAIT_UNTIL_DETECTED_DELAY = 7000
 
 
 #create a rectangle at left side of screen
@@ -197,7 +199,7 @@ class serialHandler():
         try:
             incomingSerial = self.arduinoPort.readline()
             dataToString = str(incomingSerial)
-            print(dataToString)
+            #print(dataToString)
 
             splitData = dataToString[2:-5].split(":")
 
@@ -311,7 +313,7 @@ class serialHandler():
                 self.reopenPort()
 
             self.count += 1
-            print(f"insideCount: {self.count}")
+            #print(f"insideCount: {self.count}")
 
         elif objectDetected == 0:
             whichBinPartition = 0
@@ -355,7 +357,7 @@ class cameraHandler():
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
-        self.model = YOLO("v19.pt")
+        self.model = YOLO("v22.pt")
 
         #Supervision Tracking function
         self.tracker = sv.ByteTrack()
@@ -433,7 +435,7 @@ class cameraHandler():
                 print("detecting the trash...")
                 #print("I got a picture!, processing it now")
                 detectedTrash = []
-                results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.70, max_det = 3)[0]
+                results = self.model.predict(source = self.image, show_boxes = False, verbose = False, show = False, conf = 0.65, max_det = 3)[0]
                 names = self.model.names
                 detections = sv.Detections.from_ultralytics(results)
                 detections = self.tracker.update_with_detections(detections)
@@ -467,7 +469,7 @@ class cameraHandler():
     def mainFunction(self):
         global autoTakeAPic, objectDetected
         if continueOp:
-            # if there is no trash for quite some time already, automatically take a photo every time the set period of  
+            # if there is no trash for quite some time already, automatically take a photo every time the set period of 1 minute
             if self.currentMillis() - self.prevInterruptTime >= AUTOTAKE_PHOTO_DELAY:
                 print("Timeout triggered, taking a photo with detections...")
                 autoTakeAPic = True
@@ -504,6 +506,26 @@ class telegramHandler:
                 self.msg = f"Battery waste quantity exceed safe limit! Please clean bin {dustbin_ID}"
             elif current_general_wet_waste >= 20:
                 self.msg = f"General wet waste quantity exceed safe limit! Please clean bin {dustbin_ID}"
+            elif dustbin_weight >= 20.0:
+                self.msg = f"Dustbin weight exceeded 20 kg! Current reading is {dustbin_weight} kg. Please clean bin {dustbin_ID}"
+            elif metal_waste_level == 1.00:
+                self.msg = f"Metal waste partition is full! Please clean bin {dustbin_ID}"
+            elif battery_waste_level == 1.00:
+                self.msg = f"Battery waste partition is full! Please clean bin {dustbin_ID}"
+            elif electronic_waste_level == 1.00:
+                self.msg = f"Electronic waste partition is full! Please clean bin {dustbin_ID}"
+            elif general_dry_waste_level == 1.00:
+                self.msg = f"General dry waste partition is full! Please clean bin {dustbin_ID}"
+            elif general_wet_waste_level == 1.00:
+                self.msg = f"General wet waste partition is full! Please clean bin {dustbin_ID}"
+            elif co_level >= 20.0:
+                self.msg = f"CO level exceeds safe limits! Please service bin {dustbin_ID}"
+            elif methane_level >= 20.0:
+                self.msg = f"Methane level exceeds safe limits! Please service bin {dustbin_ID}"
+            elif air_quality_level >= 20.0:
+                self.msg = f"Air quality is bad! Please service bin {dustbin_ID}"
+            elif temperature >= 45.0:
+                self.msg = f"Dustbin is very hot! Please service bin {dustbin_ID}"
             else:
                 self.msg = f"Unknown error, please service bin {dustbin_ID}"
 
@@ -567,6 +589,8 @@ class MQTTClientHandler:
     def __init__(self):
         super().__init__()
         self.prevManualPhotoMillis = self.currentMillis()
+        self.prevWaitUntilDetectedMillis = self.currentMillis()
+        self.bypassDetect = False
         self.doneConversion = False
         self.msgToPub = None
         self.prevSendMillis = self.currentMillis()
@@ -583,7 +607,7 @@ class MQTTClientHandler:
         else:
             print("Failed to connect to Mosquitto MQTT broker, return code %d\n", rc)
 
-        print(f"rc: {rc}")
+        #print(f"rc: {rc}")
 
     # handles disconnection from Mosquitto MQTT
     def onDisconnect(self, client, userdata, rc):
@@ -851,17 +875,20 @@ class MQTTClientHandler:
         self.subscribeMQTT(disable_all_topic, client)
 
         if objectDetected and not self.sendDetectedOnce:
-            print(got_battery_waste + got_metal_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste)
+            #print(got_battery_waste + got_metal_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste)
             if not self.waitForData and gotPicAuto:
+                self.prevWaitUntilDetectedMillis = self.currentMillis()
                 self.publishMQTT(img_topic, client)
                 self.waitForData = True
 
-            if got_battery_waste + got_metal_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste != 0 :
 
-                print(self.waitForData)
-                print(self.doneConversion)
-                print(gotPicAuto)
-                print(self.sendDetectedOnce)
+            if len(detectedTrash) != 0 and got_battery_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste + got_metal_waste != 0:
+                print("I see trash! waiting for confirmation...")
+
+                # print(self.waitForData)
+                # print(self.doneConversion)
+                # print(gotPicAuto)
+                # print(self.sendDetectedOnce)
 
                 if self.doneConversion:
                     self.publishMQTT(waste_topic, client)
@@ -870,9 +897,25 @@ class MQTTClientHandler:
                     
                     self.sendDetectedOnce = True
                     gotPicAuto = False
+                    self.bypassDetect = False
                     #self.doneConversion = False
                     self.waitForData = False                
                     
+            else:
+                print("waiting for timeout of no detections...")
+                # if there is no data after 1 second, we will proceed with sending the data
+                if self.currentMillis() - self.prevWaitUntilDetectedMillis >= WAIT_UNTIL_DETECTED_DELAY:
+                    if got_battery_waste + got_electronic_waste + got_general_dry_waste + got_general_wet_waste + got_metal_waste != 0:
+                        self.publishMQTT(waste_topic, client)
+                        self.publishMQTT(sensor_topic, client)
+                        self.publishMQTT(dustbin_state_topic, client)
+                        self.prevWaitUntilDetectedMillis = self.currentMillis()
+                        self.sendDetectedOnce = True
+                        gotPicAuto = False
+                        self.bypassDetect = False
+                        #self.doneConversion = False
+                        self.waitForData = False        
+
 
         elif autoTakeAPic:
             if not self.waitForData and gotPicAuto:
@@ -905,6 +948,7 @@ class MQTTClientHandler:
                 self.sendDetectedOnce = False
             self.waitForData = False
             self.doneConversion = False
+            self.prevWaitUntilDetectedMillis = self.currentMillis()
             self.prevManualPhotoMillis = self.currentMillis()
 
 
